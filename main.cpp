@@ -8,6 +8,7 @@
 #include <arpa/inet.h> //htonl, htons
 #include <vector>
 #include <algorithm>
+#include <string>
 
 #define LITTLE_STRING_SIZE 4096
 #define DEFAULT_BUFFER_SIZE (4096)
@@ -65,6 +66,7 @@ struct Client {
     bool is_correct_my_socket;
     bool is_correct_http_socket;
     Buffer * buffer_in;
+    Buffer * buffer_server_request;
     Buffer * buffer_out;
     bool is_received_get_request;
     int poll_id;
@@ -75,6 +77,7 @@ struct Client {
         is_correct_http_socket = true;
         buffer_in = new Buffer(size_buf);
         buffer_out = new Buffer(size_buf);
+        buffer_server_request = new Buffer(size_buf);
         is_received_get_request = false;
     }
 
@@ -84,6 +87,7 @@ struct Client {
             close(my_socket);
         }
         delete buffer_in;
+        delete buffer_server_request;
         delete buffer_out;
     }
 };
@@ -133,6 +137,79 @@ void accept_incoming_connection() {
 std::vector<bool> clients_to_delete;
 std::vector<Client*> rest_clients;
 
+std::pair<std::string, std::string> parse_hostname_and_path(char * uri) {
+    char host_name[LITTLE_STRING_SIZE];
+    char path[LITTLE_STRING_SIZE];
+
+    char * protocolEnd = strstr(uri, "://");
+    if (NULL == protocolEnd) {
+        perror("Wrong protocol");
+        return std::make_pair("", "");
+    }
+
+    char * host_end = strchr(protocolEnd + 3, '/');
+    size_t host_length = 0;
+    if (NULL == host_end) {
+        host_length = strlen(protocolEnd + 3);
+        path[0] = '/';
+        path[1] = '\0';
+    }
+    else {
+        host_length = host_end - (protocolEnd + 3);
+        size_t path_size = strlen(uri) - (host_end - uri);
+        strncpy(path, host_end, path_size);
+        path[path_size] = '\0';
+    }
+
+    strncpy(host_name, protocolEnd + 3, host_length);
+    host_name[host_length] = '\0';
+
+    return std::make_pair(std::string(host_name), std::string(path));
+}
+
+// return host name and first line to server GET request
+// "" - when any error in parsing
+std::pair<std::string, std::string> parse_first_line_header(int i, char * p_new_line) {
+    Buffer * client_buffer_in = clients[i]->buffer_in;
+
+    if (client_buffer_in->size < 3 ||
+        client_buffer_in->buf[0] != 'G' ||
+        client_buffer_in->buf[1] != 'E' ||
+        client_buffer_in->buf[2] != 'T')
+    {
+        fprintf(stderr, "Not GET request\n");
+        return std::make_pair("", "");
+    }
+
+    char first_line[LITTLE_STRING_SIZE];
+    size_t first_line_length = p_new_line - client_buffer_in->buf;
+    strncpy(first_line, client_buffer_in->buf, first_line_length);
+    first_line[first_line_length] = '\0';
+    fprintf(stderr, "First line from client: %s\n", first_line);
+
+    char * method = strtok(first_line, " ");
+    char * uri = strtok(NULL, " ");
+    char * version = strtok(NULL, "\n\0");
+
+    fprintf(stderr, "method: %s\n", method);
+    fprintf(stderr, "uri: %s\n", uri);
+    fprintf(stderr, "version: %s\n", version);
+
+    std::pair<std::string, std::string> parsed = parse_hostname_and_path(uri);
+    std::string host_name = parsed.first;
+    std::string path = parsed.second;
+    if ("" == host_name || "" == path) {
+        fprintf(stderr, "Hostname or path haven't been parsed\n");
+        return std::make_pair("", "");
+    }
+    fprintf(stderr, "HostName: \'%s\'\n", host_name.c_str());
+    fprintf(stderr, "Path: %s\n", path.c_str());
+
+    std::string new_first_line = std::string(method) + " " + path + " " + std::string(version);
+
+    return std::make_pair(host_name, new_first_line);
+}
+
 void receive_request_from_client(int i) {
     Buffer * client_buffer_in = clients[i]->buffer_in;
     ssize_t received = recv(clients[i]->my_socket, client_buffer_in->buf + client_buffer_in->end,
@@ -165,58 +242,34 @@ void receive_request_from_client(int i) {
             if (!clients[i]->is_received_get_request) {
                 char * p_new_line = strchr(client_buffer_in->buf, '\n');
                 if (p_new_line != NULL) {
-                    if (client_buffer_in->size < 3 ||
-                        client_buffer_in->buf[0] != 'G' ||
-                        client_buffer_in->buf[1] != 'E' ||
-                        client_buffer_in->buf[2] != 'T')
-                    {
-                        fprintf(stderr, "Not GET request\n");
-                        clients_to_delete[i] = true;
-                        break;
-                    }
-
                     clients[i]->is_received_get_request = true;
-                    size_t first_line_length = p_new_line - client_buffer_in->buf;
 
-                    char first_line[LITTLE_STRING_SIZE];
-                    strncpy(first_line, client_buffer_in->buf, first_line_length);
-                    first_line[first_line_length] = '\0';
+                    size_t i_next_line = p_new_line - client_buffer_in->buf + 1;
+                    size_t size_without_first_line = client_buffer_in->end - i_next_line;
 
-                    fprintf(stderr, "Temp: %s\n", first_line);
-                    char * method = strtok(first_line, " ");
-                    char * uri = strtok(NULL, " ");
-                    char * version = strtok(NULL, "\n\0");
-
-                    fprintf(stderr, "method: %s\n", method);
-                    fprintf(stderr, "uri: %s\n", uri);
-                    fprintf(stderr, "version: %s\n", version);
-
-                    char * protocolEnd = strstr(uri, "://");
-
-                    if (NULL == protocolEnd) {
-                        perror("Wrong protocol");
+                    std::pair<std::string, std::string> parsed = parse_first_line_header(i, p_new_line);
+                    std::string host_name = parsed.first;
+                    std::string new_first_line = parsed.second;
+                    if ("" == host_name || "" == new_first_line) {
                         clients_to_delete[i] = true;
                         break;
                     }
-                    fprintf(stderr, "Good request parse\n");
+                    fprintf(stderr, "Hostname: %s\n", host_name.c_str());
+                    fprintf(stderr, "New first line: %s\n", new_first_line.c_str());
 
-                    char * host_end = strchr(protocolEnd + 3, '/');
-                    size_t host_length = 0;
-                    if (NULL == host_end) {
-                        host_length = strlen(protocolEnd + 3);
-                    }
-                    else {
-                        host_length = host_end - (protocolEnd + 3);
-                    }
+                    memcpy(clients[i]->buffer_server_request->buf, new_first_line.c_str(), new_first_line.size());
+                    clients[i]->buffer_server_request->end += new_first_line.size();
+                    clients[i]->buffer_server_request->buf[clients[i]->buffer_server_request->end] = '\n';
+                    clients[i]->buffer_server_request->end += 1;
+                    memcpy(clients[i]->buffer_server_request->buf + clients[i]->buffer_server_request->end,
+                           client_buffer_in->buf + i_next_line, size_without_first_line);
+                    clients[i]->buffer_server_request->end += size_without_first_line;
+                    clients[i]->buffer_server_request->buf[clients[i]->buffer_server_request->end] = '\0';
+                    fprintf(stderr, "\n!!!!! New request: \n%s\n\n", clients[i]->buffer_server_request->buf);
+                    client_buffer_in->start = client_buffer_in->end;
 
-                    char host_name[LITTLE_STRING_SIZE];
-                    strncpy(host_name, protocolEnd + 3, host_length);
-                    host_name[host_length] = 0;
-
-                    fprintf(stderr, "HostName: \'%s\'\n", host_name);
-
-                    struct hostent * hostInfo = gethostbyname(host_name);
-                    if (NULL == hostInfo) {
+                    struct hostent * host_info = gethostbyname(host_name.c_str());
+                    if (NULL == host_info) {
                         perror("Error while gethostbyname");
                         clients_to_delete[i] = true;
                         break;
@@ -231,7 +284,7 @@ void receive_request_from_client(int i) {
                     struct sockaddr_in dest_addr;
                     dest_addr.sin_family = AF_INET;
                     dest_addr.sin_port = htons(DEFAULT_PORT);
-                    memcpy(&dest_addr.sin_addr, hostInfo->h_addr, hostInfo->h_length);
+                    memcpy(&dest_addr.sin_addr, host_info->h_addr, host_info->h_length);
 
                     if (-1 == connect(http_socket,
                                       (struct sockaddr *)&dest_addr, sizeof(dest_addr)))
@@ -243,6 +296,13 @@ void receive_request_from_client(int i) {
 
                     clients[i]->http_socket = http_socket;
                 }
+            }
+            else {
+                memcpy(clients[i]->buffer_server_request->buf + clients[i]->buffer_server_request->end,
+                       client_buffer_in->buf + client_buffer_in->start,
+                       (size_t)(client_buffer_in->end - client_buffer_in->start));
+                clients[i]->buffer_server_request->end += (client_buffer_in->end - client_buffer_in->start);
+                client_buffer_in->start = client_buffer_in->end;
             }
     }
 }
@@ -276,20 +336,20 @@ void send_answer_to_client(int i) {
 }
 
 void delete_finished_clients() {
-    fprintf(stderr, "%ld\n", clients.size());
+    fprintf(stderr, "Clients size before clean: %ld\n", clients.size());
     rest_clients.clear();
     for (int i = 0; i < clients_to_delete.size(); ++i) {
         if (clients_to_delete[i]) {
-            fprintf(stderr, "%d - delete\n", i);
+            //fprintf(stderr, "%d - delete\n", i);
             delete clients[i];
         }
         else {
-            fprintf(stderr, "%d - rest, buf: %d, %d\n", i, clients[i]->buffer_in->buf, clients[i]->buffer_out->buf);
+            //fprintf(stderr, "%d - rest, buf: %d, %d\n", i, clients[i]->buffer_in->buf, clients[i]->buffer_out->buf);
             rest_clients.push_back(clients[i]);
         }
     }
     clients = rest_clients;
-    fprintf(stderr, "%ld\n", clients.size());
+    fprintf(stderr, "Clients size after clean: %ld\n", clients.size());
 }
 
 void receive_server_response(int i) {
@@ -328,10 +388,10 @@ void send_request_to_server(int i) {
     bool flag_send_request_to_server = !clients_to_delete[i];
     while ( flag_send_request_to_server &&
             clients[i]->is_received_get_request &&
-            clients[i]->buffer_in->end > clients[i]->buffer_in->start) {
+            clients[i]->buffer_server_request->end > clients[i]->buffer_server_request->start) {
         fprintf(stderr, "Have data to send to http server (i):%d (fd):%d\n", i, clients[i]->http_socket);
 
-        Buffer * client_buffer_in = clients[i]->buffer_in;
+        Buffer * client_buffer_in = clients[i]->buffer_server_request;
         ssize_t sent = send(clients[i]->http_socket, client_buffer_in->buf,
                             (size_t)(client_buffer_in->end - client_buffer_in->start), 0);
         fprintf(stderr, "Sent to http: %ld, %d\n", sent, client_buffer_in->end - client_buffer_in->start);
@@ -369,7 +429,8 @@ int main(int argc, char *argv[]) {
     }
     init_server_socket(server_port);
 
-    for ( ; ; ) {
+    bool flag_execute = true;
+    for ( ; flag_execute ; ) {
         fd_set fds;
         FD_ZERO(&fds);
         int max_fd = 0;
@@ -390,8 +451,8 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "Activity: %d\n", activity);
 
         if (-1 == activity) {
-            perror("Error while poll()");
-            exit(EXIT_FAILURE);
+            perror("Error while select()");
+            continue;
         }
         else if (0 == activity) {
             perror("poll() returned 0");
