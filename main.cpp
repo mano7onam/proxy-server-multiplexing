@@ -7,7 +7,9 @@
 #include <unistd.h> //read, write, close
 #include <arpa/inet.h> //htonl, htons
 #include <vector>
+#include <algorithm>
 
+#define LITTLE_STRING_SIZE 4096
 #define DEFAULT_BUFFER_SIZE (4096)
 #define DEFAULT_PORT 80
 
@@ -20,6 +22,11 @@ struct Buffer {
 
     Buffer(int size_buf) {
         buf = (char*)malloc((size_t)size_buf);
+        if (NULL == buf) {
+            perror("new buf");
+            is_correct = false;
+            exit(EXIT_FAILURE);
+        }
         start = 0;
         end = 0;
         size = size_buf;
@@ -27,29 +34,34 @@ struct Buffer {
     }
 
     int resize(int new_size_buf) {
-        char * result = (char *)realloc(buf, (size_t)size);
+        char * result = (char *)realloc(buf, (size_t)new_size_buf);
         if (NULL == result) {
-            perror("Error while incoming realloc");
+            perror("realloc");
             free(buf);
-            is_correct = false;
-            return -1;
+            exit(EXIT_FAILURE);
         }
-        else {
-            buf = result;
-            return 1;
-        }
+        buf = result;
+        size = new_size_buf;
     }
 
     ~Buffer() {
+        fprintf(stderr, "Destructor buffer!!!!\n");
+        fprintf(stderr, "Buf: %d\n", buf);
+        fprintf(stderr, "Size: %d\n", size);
         if (is_correct){
             free(buf);
+            perror("free");
         }
+        else {
+            fprintf(stderr, "Destructor buffer not correct\n");
+        }
+        fprintf(stderr, "Done\n");
     }
 };
 
 struct Actor {
-    struct pollfd my_pollfd;
-    struct pollfd http_pollfd;
+    int my_socket;
+    int http_socket;
     bool is_correct_my_socket;
     bool is_correct_http_socket;
     Buffer * buffer_in;
@@ -57,8 +69,8 @@ struct Actor {
     bool is_received_get_request;
     int poll_id;
 
-    Actor(struct pollfd my_pollfd, int size_buf) {
-        this->my_pollfd = my_pollfd;
+    Actor(int my_socket, int size_buf) {
+        this->my_socket = my_socket;
         is_correct_my_socket = true;
         is_correct_http_socket = true;
         buffer_in = new Buffer(size_buf);
@@ -67,8 +79,9 @@ struct Actor {
     }
 
     ~Actor() {
+        fprintf(stderr, "Destructor client!!!!\n");
         if (is_correct_my_socket) {
-            close(my_pollfd.fd);
+            close(my_socket);
         }
         delete buffer_in;
         delete buffer_out;
@@ -78,7 +91,6 @@ struct Actor {
 std::vector<Actor*> clients;
 
 int server_socket;
-struct pollfd server_pollfd;
 
 int main(int argc, char *argv[]) {
     // todo GET_OPT!!!
@@ -117,51 +129,40 @@ int main(int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
 
-    server_pollfd.fd = server_socket;
-    server_pollfd.events = POLLIN;
-
 //======================================================================================
 
+    std::vector<bool> clients_to_delete;
+    std::vector<Actor*> rest_clients;
     for ( ; ; ) {
-        fprintf(stderr, "Before poll\n");
-        struct pollfd * sockets = new struct pollfd[1 + 2 * clients.size()];
-        int it_sockets = 0;
-        sockets[0] = server_pollfd;
-        ++it_sockets;
-        for (auto client : clients) {
-            sockets[it_sockets] = client->my_pollfd;
-            ++it_sockets;
-            if (client->is_received_get_request) {
-                sockets[it_sockets] = client->http_pollfd;
-                ++it_sockets;
-            }
-        }
-        fprintf(stderr, "Size into: %d\n", it_sockets);
-        int ready_count = poll(sockets, (size_t)it_sockets, -1);
-        fprintf(stderr, "After poll: %d\n", ready_count);
+        fd_set fds;
+        FD_ZERO(&fds);
+        int max_fd = 0;
 
-        server_pollfd = sockets[0];
-        it_sockets = 1;
+        FD_SET(server_socket, &fds);
+        max_fd = server_socket;
+
         for (auto client : clients) {
-            client->my_pollfd = sockets[it_sockets];
-            ++it_sockets;
+            FD_SET(client->my_socket, &fds);
+            max_fd = std::max(max_fd, client->my_socket);
             if (client->is_received_get_request) {
-                client->http_pollfd = sockets[it_sockets];
-                ++it_sockets;
+                FD_SET(client->http_socket, &fds);
+                max_fd = std::max(max_fd, client->http_socket);
             }
         }
 
-        if (-1 == ready_count) {
+        int activity = select(max_fd + 1, &fds, NULL, NULL, NULL);
+        fprintf(stderr, "Activity: %d\n", activity);
+
+        if (-1 == activity) {
             perror("Error while poll()");
             exit(EXIT_FAILURE);
         }
-        else if (0 == ready_count) {
+        else if (0 == activity) {
             perror("poll() returned 0");
-            delete[] sockets;
             continue;
         }
 
-        if (0 != (server_pollfd.revents & POLLIN)) {
+        if (FD_ISSET(server_socket, &fds)) {
             fprintf(stderr, "Have incoming client connection\n");
 
             struct sockaddr_in client_address;
@@ -174,34 +175,29 @@ int main(int argc, char *argv[]) {
                 exit(EXIT_FAILURE);
             }
 
-            struct pollfd new_client_pollfd;
-            new_client_pollfd.fd = client_socket;
-            new_client_pollfd.events = POLLIN;
-            clients.push_back(new Actor(new_client_pollfd, DEFAULT_BUFFER_SIZE));
-
-            ready_count--;
+            Actor * new_actor = new Actor(client_socket, DEFAULT_BUFFER_SIZE);
+            clients.push_back(new_actor);
         }
 
-        std::vector<int> clients_to_delete;
-        for (int i = 0; i < clients.size() && ready_count > 0; ++i) {
-            struct pollfd client_pollfd = clients[i]->my_pollfd;
-            if (0 != (client_pollfd.revents & POLLIN)) {
+        clients_to_delete.assign(clients.size(), false);
+        for (int i = 0; i < clients.size(); ++i) {
+            if (FD_ISSET(clients[i]->my_socket, &fds)) {
                 fprintf(stderr, "Have data from client %d\n", i);
 
                 Buffer * client_buffer_in = clients[i]->buffer_in;
-                ssize_t received = recv(client_pollfd.fd, client_buffer_in->buf + client_buffer_in->end,
+                ssize_t received = recv(clients[i]->my_socket, client_buffer_in->buf + client_buffer_in->end,
                                         (size_t)(client_buffer_in->size - client_buffer_in->end), 0);
-                fprintf(stderr, "Client[fd %d] receive: %ld\n", client_pollfd.fd, received);
+                fprintf(stderr, "Client[fd %d] receive: %ld\n", clients[i]->my_socket, received);
 
                 switch (received) {
                     case -1:
                         perror("Error while read()");
                         clients[i]->is_correct_my_socket = false;
-                        clients_to_delete.push_back(i);
+                        clients_to_delete[i] = true;
                         break;
                     case 0:
-                        fprintf(stderr, "Close client");
-                        clients_to_delete.push_back(i);
+                        fprintf(stderr, "Close client\n");
+                        clients_to_delete[i] = true;
                         break;
                     default:
                         client_buffer_in->end += received;
@@ -209,7 +205,7 @@ int main(int argc, char *argv[]) {
                             int new_size = client_buffer_in->size * 2;
                             int res = client_buffer_in->resize(new_size);
                             if (-1 == res) {
-                                clients_to_delete.push_back(i);
+                                clients_to_delete[i] = true;
                                 break;
                             }
                         }
@@ -225,14 +221,14 @@ int main(int argc, char *argv[]) {
                                         client_buffer_in->buf[2] != 'T')
                                 {
                                     fprintf(stderr, "Not GET request\n");
-                                    clients_to_delete.push_back(i);
+                                    clients_to_delete[i] = true;
                                     break;
                                 }
 
                                 clients[i]->is_received_get_request = true;
                                 size_t first_line_length = p_new_line - client_buffer_in->buf;
 
-                                char * first_line = new char[first_line_length + 1];
+                                char first_line[LITTLE_STRING_SIZE];
                                 strncpy(first_line, client_buffer_in->buf, first_line_length);
                                 first_line[first_line_length] = '\0';
 
@@ -249,7 +245,7 @@ int main(int argc, char *argv[]) {
 
                                 if (NULL == protocolEnd) {
                                     perror("Wrong protocol");
-                                    clients_to_delete.push_back(i);
+                                    clients_to_delete[i] = true;
                                     break;
                                 }
                                 fprintf(stderr, "Good request parse\n");
@@ -263,7 +259,7 @@ int main(int argc, char *argv[]) {
                                     host_length = host_end - (protocolEnd + 3);
                                 }
 
-                                char * host_name = new char[host_length + 1];
+                                char host_name[LITTLE_STRING_SIZE];
                                 strncpy(host_name, protocolEnd + 3, host_length);
                                 host_name[host_length] = 0;
 
@@ -272,7 +268,7 @@ int main(int argc, char *argv[]) {
                                 struct hostent * hostInfo = gethostbyname(host_name);
                                 if (NULL == hostInfo) {
                                     perror("Error while gethostbyname");
-                                    clients_to_delete.push_back(i);
+                                    clients_to_delete[i] = true;
                                     break;
                                 }
 
@@ -291,89 +287,69 @@ int main(int argc, char *argv[]) {
                                                   (struct sockaddr *)&dest_addr, sizeof(dest_addr)))
                                 {
                                     perror("Error while connect().\n");
-                                    clients_to_delete.push_back(i);
+                                    clients_to_delete[i] = true;
                                     break;
                                 }
 
-                                struct pollfd http_pollfd;
-                                http_pollfd.fd = http_socket;
-                                http_pollfd.events = POLLOUT;
-                                clients[i]->http_pollfd = http_pollfd;
-
-                                //delete[] host_name;
-                                delete[] first_line;
+                                clients[i]->http_socket = http_socket;
                             }
                         }
                 }
-                ready_count--;
             }
-            else if (clients[i]->is_received_get_request && /*0 != (client_pollfd.fd & POLLOUT) &&*/
-                    clients[i]->buffer_out->end > clients[i]->buffer_out->start) {
+
+            bool flag_sent_answer_to_client = !clients_to_delete[i];
+            while (flag_sent_answer_to_client &&
+                    clients[i]->is_received_get_request &&
+                    clients[i]->buffer_out->end > clients[i]->buffer_out->start)
+            {
                 fprintf(stderr, "Have data to send to client %d\n", i);
                 Buffer * client_buffer_out = clients[i]->buffer_out;
-                ssize_t sent = send(client_pollfd.fd, client_buffer_out->buf + client_buffer_out->start,
+                ssize_t sent = send(clients[i]->my_socket, client_buffer_out->buf + client_buffer_out->start,
                                     (size_t)(client_buffer_out->end - client_buffer_out->start), 0);
                 fprintf(stderr, "Sent: %ld\n", sent);
                 switch (sent) {
                     case -1:
                         perror("Error while send to client");
                         clients[i]->is_correct_my_socket = false;
-                        clients_to_delete.push_back(i);
+                        clients_to_delete[i] = true;
+                        flag_sent_answer_to_client = false;
+                        break;
                     case 0:
-                        clients_to_delete.push_back(i);
+                        clients_to_delete[i] = true;
+                        flag_sent_answer_to_client = false;
                         break;
                     default:
                         client_buffer_out->start += sent;
-                        if (client_buffer_out->start == client_buffer_out->end) {
-                            clients[i]->my_pollfd.events &= ~POLLOUT;
-                        }
                 }
             }
         }
 
+        fprintf(stderr, "%ld\n", clients.size());
+        rest_clients.clear();
         for (int i = 0; i < clients_to_delete.size(); ++i) {
-            delete clients[clients_to_delete[i]];
-            clients.erase(clients.begin() + clients_to_delete[i]);
+            if (clients_to_delete[i]) {
+                fprintf(stderr, "%d - delete\n", i);
+                delete clients[i];
+            }
+            else {
+                fprintf(stderr, "%d - rest, buf: %d, %d\n", i, clients[i]->buffer_in->buf, clients[i]->buffer_out->buf);
+                rest_clients.push_back(clients[i]);
+            }
         }
-        clients_to_delete.clear();
+        clients = rest_clients;
+        fprintf(stderr, "%ld\n", clients.size());
 
+        clients_to_delete.assign(clients.size(), false);
         for (int i = 0; i < clients.size(); ++i) {
             if (!clients[i]->is_received_get_request) {
                 continue;
             }
 
-            struct pollfd http_pollfd = clients[i]->http_pollfd;
-            if (-1 != http_pollfd.fd/* && 0 != (http_pollfd.fd & POLLOUT)
-                    clients[i]->buffer_in->end > clients[i]->buffer_in->start*/) {
-                fprintf(stderr, "Have data to send to http server (i):%d (fd):%d\n", i, http_pollfd.fd);
-
-                Buffer * client_buffer_in = clients[i]->buffer_in;
-                ssize_t sent = send(http_pollfd.fd, client_buffer_in->buf,
-                                    (size_t)(client_buffer_in->end - client_buffer_in->start), 0);
-                fprintf(stderr, "Sent to http: %ld, %d\n", sent, client_buffer_in->end - client_buffer_in->start);
-
-                switch (sent) {
-                    case -1:
-                        perror("Error while send(http)");
-                        clients[i]->is_correct_http_socket = false;
-                        clients_to_delete.push_back(i);
-                        break;
-                    case 0:
-                        close(http_pollfd.fd);
-                        clients[i]->http_pollfd.fd = -1;
-                        break;
-                    default:
-                        client_buffer_in->start += sent;
-                        if (client_buffer_in->start == client_buffer_in->end) {
-                            clients[i]->http_pollfd.events &= ~POLLOUT;
-                        }
-                }
-            }
-            if (true || -1 != http_pollfd.fd && 0 != (http_pollfd.fd & POLLIN)) {
-                fprintf(stderr, "Have data - http response (id):%d\n", i);
+            if (clients[i]->is_received_get_request && FD_ISSET(clients[i]->http_socket, &fds)) {
+                fprintf(stderr, "Have data (http response), (id):%d\n", i);
 
                 Buffer * client_buffer_out = clients[i]->buffer_out;
-                ssize_t received = recv(http_pollfd.fd, client_buffer_out->buf + client_buffer_out->end,
+                ssize_t received = recv(clients[i]->http_socket, client_buffer_out->buf + client_buffer_out->end,
                                         (size_t)(client_buffer_out->size - client_buffer_out->end), 0);
                 fprintf(stderr, "Received from http: %ld %d\n", received, client_buffer_out->size - client_buffer_out->end);
 
@@ -381,13 +357,12 @@ int main(int argc, char *argv[]) {
                     case -1:
                         perror("recv(http)");
                         clients[i]->is_correct_http_socket = false;
-                        clients_to_delete.push_back(i);
+                        clients_to_delete[i] = true;
                         break;
                     case 0:
                         fprintf(stderr, "Close http connection\n");
-                        close(http_pollfd.fd);
-                        http_pollfd.fd = -1;
-                        clients[i]->http_pollfd.fd = -1;
+                        close(clients[i]->http_socket);
+                        clients[i]->http_socket = -1;
                         break;
                     default:
                         client_buffer_out->end += received;
@@ -395,24 +370,52 @@ int main(int argc, char *argv[]) {
                             int new_size_buf = client_buffer_out->size * 2;
                             int res = client_buffer_out->resize(new_size_buf);
                             if (-1 == res) {
-                                clients_to_delete.push_back(i);
+                                clients_to_delete[i] = true;
                                 break;
                             }
                         }
-                        clients[i]->my_pollfd.events |= POLLOUT;
                 }
             }
 
+            bool flag_send_request_to_server = !clients_to_delete[i];
+            while ( flag_send_request_to_server &&
+                    clients[i]->is_received_get_request &&
+                    clients[i]->buffer_in->end > clients[i]->buffer_in->start) {
+                fprintf(stderr, "Have data to send to http server (i):%d (fd):%d\n", i, clients[i]->http_socket);
+
+                Buffer * client_buffer_in = clients[i]->buffer_in;
+                ssize_t sent = send(clients[i]->http_socket, client_buffer_in->buf,
+                                    (size_t)(client_buffer_in->end - client_buffer_in->start), 0);
+                fprintf(stderr, "Sent to http: %ld, %d\n", sent, client_buffer_in->end - client_buffer_in->start);
+
+                switch (sent) {
+                    case -1:
+                        perror("Error while send(http)");
+                        clients[i]->is_correct_http_socket = false;
+                        clients_to_delete[i] = true;
+                        flag_send_request_to_server = false;
+                        break;
+                    case 0:
+                        close(clients[i]->http_socket);
+                        clients[i]->http_socket = -1;
+                        flag_send_request_to_server = false;
+                        break;
+                    default:
+                        client_buffer_in->start += sent;
+                }
+            }
         }
 
+        rest_clients.clear();
         for (int i = 0; i < clients_to_delete.size(); ++i) {
-            delete clients[clients_to_delete[i]];
-            clients.erase(clients.begin() + clients_to_delete[i]);
-            fprintf(stderr, "Delete client: %d\n", i);
+            if (clients_to_delete[i]) {
+                delete clients[i];
+            }
+            else {
+                rest_clients.push_back(clients[i]);
+            }
         }
-        clients_to_delete.clear();
-
-        delete[] sockets;
+        clients = rest_clients;
     }
 
     for (auto client : clients) {
