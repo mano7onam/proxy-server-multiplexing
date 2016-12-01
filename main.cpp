@@ -286,7 +286,7 @@ int main(int argc, char *argv[]) {
                                 if (-1 == connect(http_socket,
                                                   (struct sockaddr *)&dest_addr, sizeof(dest_addr)))
                                 {
-                                    perror("Error while connect().\n");
+                                    perror("Error while connect()");
                                     clients_to_delete[i] = true;
                                     break;
                                 }
@@ -374,6 +374,8 @@ int main(int argc, char *argv[]) {
                                 break;
                             }
                         }
+                        client_buffer_out->buf[client_buffer_out->end] ='\0';
+                        fprintf(stderr, "\n\nHave:\n%s\n\n", client_buffer_out->buf);
                 }
             }
 
