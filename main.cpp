@@ -214,7 +214,6 @@ void receive_request_from_client(int i) {
     Buffer * client_buffer_in = clients[i]->buffer_in;
     ssize_t received = recv(clients[i]->my_socket, client_buffer_in->buf + client_buffer_in->end,
                             (size_t)(client_buffer_in->size - client_buffer_in->end), 0);
-    fprintf(stderr, "Client[fd %d] receive: %ld\n", clients[i]->my_socket, received);
 
     switch (received) {
         case -1:
@@ -230,14 +229,16 @@ void receive_request_from_client(int i) {
             client_buffer_in->end += received;
             if (client_buffer_in->end == client_buffer_in->size) {
                 int new_size = client_buffer_in->size * 2;
-                int res = client_buffer_in->resize(new_size);
-                if (-1 == res) {
+                int res1 = client_buffer_in->resize(new_size);
+                int res2 = clients[i]->buffer_server_request->resize(new_size);
+                if (-1 == res1 || -1 == res2) {
                     clients_to_delete[i] = true;
                     break;
                 }
             }
 
-            fprintf(stderr, "Received from client: %s\n", client_buffer_in->buf);
+            client_buffer_in->buf[client_buffer_in->end] = '\0';
+            fprintf(stderr, "\nReceived from client: \n%s\n\n", client_buffer_in->buf);
 
             if (!clients[i]->is_received_get_request) {
                 char * p_new_line = strchr(client_buffer_in->buf, '\n');
@@ -313,7 +314,7 @@ void send_answer_to_client(int i) {
            clients[i]->is_received_get_request &&
            clients[i]->buffer_out->end > clients[i]->buffer_out->start)
     {
-        fprintf(stderr, "Have data to send to client %d\n", i);
+        fprintf(stderr, "\nHave data to send to client %d\n", i);
         Buffer * client_buffer_out = clients[i]->buffer_out;
         ssize_t sent = send(clients[i]->my_socket, client_buffer_out->buf + client_buffer_out->start,
                             (size_t)(client_buffer_out->end - client_buffer_out->start), 0);
@@ -336,7 +337,7 @@ void send_answer_to_client(int i) {
 }
 
 void delete_finished_clients() {
-    fprintf(stderr, "Clients size before clean: %ld\n", clients.size());
+    fprintf(stderr, "\nClients size before clean: %ld\n", clients.size());
     rest_clients.clear();
     for (int i = 0; i < clients_to_delete.size(); ++i) {
         if (clients_to_delete[i]) {
@@ -356,7 +357,6 @@ void receive_server_response(int i) {
     Buffer * client_buffer_out = clients[i]->buffer_out;
     ssize_t received = recv(clients[i]->http_socket, client_buffer_out->buf + client_buffer_out->end,
                             (size_t)(client_buffer_out->size - client_buffer_out->end), 0);
-    fprintf(stderr, "Received from http: %ld %d\n", received, client_buffer_out->size - client_buffer_out->end);
 
     switch (received) {
         case -1:
@@ -380,7 +380,7 @@ void receive_server_response(int i) {
                 }
             }
             client_buffer_out->buf[client_buffer_out->end] ='\0';
-            fprintf(stderr, "\n\nHave:\n%s\n\n", client_buffer_out->buf);
+            fprintf(stderr, "\n\nReceived from http:\n%s\n\n", client_buffer_out->buf);
     }
 }
 
@@ -389,7 +389,7 @@ void send_request_to_server(int i) {
     while ( flag_send_request_to_server &&
             clients[i]->is_received_get_request &&
             clients[i]->buffer_server_request->end > clients[i]->buffer_server_request->start) {
-        fprintf(stderr, "Have data to send to http server (i):%d (fd):%d\n", i, clients[i]->http_socket);
+        fprintf(stderr, "\nHave data to send to http server (i):%d (fd):%d\n", i, clients[i]->http_socket);
 
         Buffer * client_buffer_in = clients[i]->buffer_server_request;
         ssize_t sent = send(clients[i]->http_socket, client_buffer_in->buf,
