@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <string>
 #include <map>
+#include <fstream>
 
 #define LITTLE_STRING_SIZE 4096
 #define DEFAULT_BUFFER_SIZE (4096)
@@ -17,6 +18,8 @@
 
 #define RESULT_CORRECT 1
 #define RESULT_INCORRECT -1
+
+std::ofstream out_to_file("output.txt");
 
 struct Buffer {
     char * buf;
@@ -81,7 +84,7 @@ struct Buffer {
     }
 };
 
-std::map<std::pair<std::string, std::string>, char *> cache;
+std::map<std::pair<std::string, std::string>, std::pair<char *, size_t>> m_cache;
 
 struct Client {
     int my_socket;
@@ -98,8 +101,9 @@ struct Client {
     int poll_id;
     std::pair<std::string, std::string> first_line_and_host;
 
-    Client(int my_socket, int size_buf) {
+    Client(int my_socket, size_t size_buf) {
         this->my_socket = my_socket;
+        this->http_socket = -1;
         is_correct_my_socket = true;
         is_correct_http_socket = true;
         buffer_in = new Buffer(size_buf);
@@ -111,9 +115,11 @@ struct Client {
     }
 
     void add_result_to_cache() {
-        if (!cache.count(first_line_and_host)) {
-            cache[first_line_and_host] = (char *) malloc((size_t) buffer_out->end);
-            memcpy(cache[first_line_and_host], buffer_out->buf, (size_t) buffer_out->end);
+        if (!m_cache.count(first_line_and_host)) {
+            size_t size_data = buffer_out->end;
+            char * data = (char*)malloc(size_data);
+            memcpy(data, buffer_out->buf, size_data);
+            m_cache[first_line_and_host] = std::make_pair(data, size_data);
         }
     }
 
@@ -218,7 +224,7 @@ std::pair<std::string, std::string> parse_hostname_and_path(char * uri) {
 
 // return host name and first line to server GET request
 // "" - when any error in parsing
-std::pair<std::string, std::string> parse_first_line_header(int i, char * p_new_line) {
+std::pair<std::string, std::string> get_new_first_line_and_hostname(int i, char *p_new_line) {
     Buffer * client_buffer_in = clients[i]->buffer_in;
 
     if (client_buffer_in->size < 3 ||
@@ -254,46 +260,30 @@ std::pair<std::string, std::string> parse_first_line_header(int i, char * p_new_
     fprintf(stderr, "HostName: \'%s\'\n", host_name.c_str());
     fprintf(stderr, "Path: %s\n", path.c_str());
 
-    std::string new_first_line = std::string(method) + " " + path + " " + std::string(version);
+    std::string http10str = "HTTP/1.0";
+    //std::string new_first_line = std::string(method) + " " + path + " " + std::string(version);
+    std::string new_first_line = std::string(method) + " " + path + " " + http10str;
 
     return std::make_pair(host_name, new_first_line);
 }
 
-int handle_first_line_proxy_request(int i, char * p_new_line) {
-    Buffer * client_buffer_in = clients[i]->buffer_in;
-
-    size_t i_next_line = p_new_line - client_buffer_in->buf + 1;
+void push_first_data_request(int i, std::string new_first_line, Buffer *client_buffer_in, size_t i_next_line) {
     size_t size_without_first_line = client_buffer_in->end - i_next_line;
-
-    std::pair<std::string, std::string> parsed = parse_first_line_header(i, p_new_line);
-    std::string host_name = parsed.first;
-    std::string new_first_line = parsed.second;
-    if ("" == host_name || "" == new_first_line) {
-        fprintf(stderr, "Can not correctly parse first line\n");
-        return RESULT_INCORRECT;
-    }
-    if (cache.count(std::make_pair(new_first_line, host_name))) {
-        fprintf(stderr, "Have this in cache\n");
-    }
-    fprintf(stderr, "Hostname: %s\n", host_name.c_str());
-    fprintf(stderr, "New first line: %s\n", new_first_line.c_str());
-
-    /*memcpy(clients[i]->buffer_server_request->buf, new_first_line.c_str(), new_first_line.size());
-    clients[i]->buffer_server_request->end += new_first_line.size();
-    clients[i]->buffer_server_request->buf[clients[i]->buffer_server_request->end] = '\n';
-    clients[i]->buffer_server_request->end += 1;
-    memcpy(clients[i]->buffer_server_request->buf + clients[i]->buffer_server_request->end,
-           client_buffer_in->buf + i_next_line, size_without_first_line);
-    clients[i]->buffer_server_request->end += size_without_first_line;
-    clients[i]->buffer_server_request->buf[clients[i]->buffer_server_request->end] = '\0';
-    fprintf(stderr, "\n!!!!! New request: \n%s\n\n", clients[i]->buffer_server_request->buf);
-    client_buffer_in->start = client_buffer_in->end;*/
     clients[i]->buffer_server_request->add_data_to_end(new_first_line.c_str(), new_first_line.size());
     clients[i]->buffer_server_request->add_symbol_to_end('\n');
     clients[i]->buffer_server_request->add_data_to_end(client_buffer_in->buf + i_next_line, size_without_first_line);
     clients[i]->buffer_server_request->buf[clients[i]->buffer_server_request->end] = '\0';
+    client_buffer_in->start = client_buffer_in->end;
     fprintf(stderr, "\n!!!!! New request: \n%s\n\n", clients[i]->buffer_server_request->buf);
+}
 
+void push_first_data_request_from_cache(int i, std::pair<char*, size_t> cache) {
+    clients[i]->is_data_cached = true;
+    Buffer * buffer = clients[i]->buffer_server_request;
+    buffer->add_data_to_end(cache.first, cache.second);
+}
+
+int create_tcp_connection_to_request(int i, std::string host_name) {
     struct hostent * host_info = gethostbyname(host_name.c_str());
     if (NULL == host_info) {
         perror("Error while gethostbyname");
@@ -316,14 +306,49 @@ int handle_first_line_proxy_request(int i, char * p_new_line) {
         return RESULT_INCORRECT;
     }
     clients[i]->http_socket = http_socket;
+}
 
-    return RESULT_CORRECT;
+int handle_first_line_proxy_request(int i, char * p_new_line, size_t i_next_line) {
+    Buffer * client_buffer_in = clients[i]->buffer_in;
+
+    std::pair<std::string, std::string> parsed = get_new_first_line_and_hostname(i, p_new_line);
+    std::string host_name = parsed.first;
+    std::string new_first_line = parsed.second;
+    fprintf(stderr, "Hostname: %s\n", host_name.c_str());
+    fprintf(stderr, "New first line: %s\n", new_first_line.c_str());
+    if ("" == host_name || "" == new_first_line) {
+        fprintf(stderr, "Can not correctly parse first line\n");
+        return RESULT_INCORRECT;
+    }
+
+    if (/*false && */m_cache.count(parsed)) {
+        push_first_data_request_from_cache(i, m_cache[parsed]);
+        return RESULT_CORRECT;
+    }
+    else {
+        push_first_data_request(i, new_first_line, client_buffer_in, i_next_line);
+        int result_connection = create_tcp_connection_to_request(i, host_name);
+        return result_connection;
+    }
+}
+
+int move_end_client_in_buffer(int i, ssize_t received) {
+    int result = RESULT_CORRECT;
+    Buffer * client_buffer_in = clients[i]->buffer_in;
+    client_buffer_in->end += received;
+    if (client_buffer_in->end == client_buffer_in->size) {
+        size_t new_size = client_buffer_in->size * 2;
+        result = client_buffer_in->resize(new_size);
+    }
+    client_buffer_in->buf[client_buffer_in->end] = '\0';
+    fprintf(stderr, "\nReceived from client: \n%s\n\n", client_buffer_in->buf);
+    return result;
 }
 
 void receive_request_from_client(int i) {
     Buffer * client_buffer_in = clients[i]->buffer_in;
     ssize_t received = recv(clients[i]->my_socket, client_buffer_in->buf + client_buffer_in->end,
-                            (size_t)(client_buffer_in->size - client_buffer_in->end), 0);
+                           client_buffer_in->size - client_buffer_in->end, 0);
 
     switch (received) {
         case -1:
@@ -338,26 +363,19 @@ void receive_request_from_client(int i) {
             clients[i]->set_closed_correct();
             break;
         default:
-            client_buffer_in->end += received;
-            if (client_buffer_in->end == client_buffer_in->size) {
-                int new_size = client_buffer_in->size * 2;
-                int res1 = client_buffer_in->resize(new_size);
-                int res2 = clients[i]->buffer_server_request->resize(new_size);
-                if (-1 == res1 || -1 == res2) {
-                    clients_to_delete[i] = true;
-                    clients[i]->set_closed_incorrect();
-                    break;
-                }
+            int res = move_end_client_in_buffer(i, received);
+            if (RESULT_INCORRECT == res) {
+                clients_to_delete[i] = true;
+                clients[i]->set_closed_incorrect();
+                break;
             }
-
-            client_buffer_in->buf[client_buffer_in->end] = '\0';
-            fprintf(stderr, "\nReceived from client: \n%s\n\n", client_buffer_in->buf);
 
             if (!clients[i]->is_received_get_request) {
                 char * p_new_line = strchr(client_buffer_in->buf, '\n');
                 if (p_new_line != NULL) {
                     clients[i]->is_received_get_request = true;
-                    int result = handle_first_line_proxy_request(i, p_new_line);
+                    size_t i_next_line = (p_new_line - client_buffer_in->buf) + 1;
+                    int result = handle_first_line_proxy_request(i, p_new_line, i_next_line);
                     if (RESULT_INCORRECT == result) {
                         clients_to_delete[i] = true;
                         clients[i]->set_closed_incorrect();
@@ -370,11 +388,6 @@ void receive_request_from_client(int i) {
                 size_t size_data = (client_buffer_in->end - client_buffer_in->start);
                 clients[i]->buffer_server_request->add_data_to_end(from, size_data);
                 client_buffer_in->start = client_buffer_in->end;
-                /*memcpy(clients[i]->buffer_server_request->buf + clients[i]->buffer_server_request->end,
-                       client_buffer_in->buf + client_buffer_in->start,
-                       (size_t)(client_buffer_in->end - client_buffer_in->start));
-                clients[i]->buffer_server_request->end += (client_buffer_in->end - client_buffer_in->start);
-                client_buffer_in->start = client_buffer_in->end;*/
             }
     }
 }
@@ -413,7 +426,7 @@ void delete_finished_clients() {
     fprintf(stderr, "\nClients size before clean: %ld\n", clients.size());
     rest_clients.clear();
     for (int i = 0; i < clients_to_delete.size(); ++i) {
-        if (clients_to_delete[i]) {
+        if (clients[i]->is_closed) {
             //fprintf(stderr, "%d - delete\n", i);
             delete clients[i];
         }
@@ -446,7 +459,7 @@ void receive_server_response(int i) {
         default:
             client_buffer_out->end += received;
             if (client_buffer_out->end == client_buffer_out->size) {
-                int new_size_buf = client_buffer_out->size * 2;
+                size_t new_size_buf = client_buffer_out->size * 2;
                 int res = client_buffer_out->resize(new_size_buf);
                 if (-1 == res) {
                     clients_to_delete[i] = true;
@@ -456,6 +469,7 @@ void receive_server_response(int i) {
             }
             client_buffer_out->buf[client_buffer_out->end] ='\0';
             fprintf(stderr, "\n\nReceived from http:\n%s\n\n", client_buffer_out->buf);
+            out_to_file << client_buffer_out->buf << std::endl << std::endl;
     }
 }
 
@@ -463,6 +477,7 @@ void send_request_to_server(int i) {
     bool flag_send_request_to_server = !clients_to_delete[i];
     while ( flag_send_request_to_server &&
             clients[i]->is_received_get_request &&
+            !clients[i]->is_data_cached &&
             clients[i]->buffer_server_request->end > clients[i]->buffer_server_request->start) {
         fprintf(stderr, "\nHave data to send to http server (i):%d (fd):%d\n", i, clients[i]->http_socket);
 
@@ -525,7 +540,6 @@ int main(int argc, char *argv[]) {
 
         int activity = select(max_fd + 1, &fds, NULL, NULL, NULL);
         fprintf(stderr, "Activity: %d\n", activity);
-
         if (-1 == activity) {
             perror("Error while select()");
             continue;
@@ -545,8 +559,8 @@ int main(int argc, char *argv[]) {
             if (FD_ISSET(clients[i]->my_socket, &fds)) {
                 fprintf(stderr, "Have data from client %d\n", i);
                 receive_request_from_client(i);
-                send_request_to_server(i);
             }
+            send_request_to_server(i);
         }
 
         delete_finished_clients();
@@ -560,16 +574,16 @@ int main(int argc, char *argv[]) {
             if (clients[i]->is_received_get_request && FD_ISSET(clients[i]->http_socket, &fds)) {
                 fprintf(stderr, "Have data (http response), (id):%d\n", i);
                 receive_server_response(i);
-                send_answer_to_client(i);
             }
+            send_answer_to_client(i);
         }
 
         delete_finished_clients();
     }
 
     // free cache
-    for (auto record : cache) {
-        free(record.second);
+    for (auto record : m_cache) {
+        free(record.second.first);
     }
 
     // close clients
