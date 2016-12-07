@@ -308,6 +308,7 @@ int create_tcp_connection_to_request(int i, std::string host_name) {
         return RESULT_INCORRECT;
     }
     clients[i]->http_socket = http_socket;
+    return RESULT_CORRECT;
 }
 
 int handle_first_line_proxy_request(int i, char * p_new_line, size_t i_next_line) {
