@@ -350,7 +350,7 @@ int move_end_client_in_buffer(int i, ssize_t received) {
 void delete_finished_clients() {
     //fprintf(stderr, "\nClients size before clean: %ld\n", clients.size());
     rest_clients.clear();
-    for (int i = 0; i < clients_to_delete.size(); ++i) {
+    for (int i = 0; i < clients.size(); ++i) {
         if (clients[i]->is_closed) {
             //fprintf(stderr, "%d - delete\n", i);
             delete clients[i];
@@ -535,7 +535,7 @@ int main(int argc, char *argv[]) {
             FD_SET(client->my_socket, &fds_read);
             FD_SET(client->my_socket, &fds_write);
             max_fd = std::max(max_fd, client->my_socket);
-            if (client->is_received_get_request) {
+            if (client->is_received_get_request && -1 != client->http_socket) {
                 FD_SET(client->http_socket, &fds_read);
                 FD_SET(client->http_socket, &fds_write);
                 max_fd = std::max(max_fd, client->http_socket);
