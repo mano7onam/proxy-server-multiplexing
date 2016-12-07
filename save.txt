@@ -72,8 +72,8 @@ struct Buffer {
     ~Buffer() {
         fprintf(stderr, "Destructor buffer!!!!\n");
         fprintf(stderr, "Buf: %d\n", buf);
-        fprintf(stderr, "Size: %ld\n", size);
-        if (is_correct) {
+        fprintf(stderr, "Size: %d\n", size);
+        if (is_correct){
             free(buf);
             perror("free");
         }
@@ -98,9 +98,9 @@ struct Client {
     bool is_closed;
     bool is_closed_correct;
     bool is_data_cached;
+    bool is_connected;
     struct sockaddr_in dest_addr;
     int poll_id;
-    long long last_time_activity;
     std::pair<std::string, std::string> first_line_and_host;
 
     Client(int my_socket, size_t size_buf) {
@@ -114,6 +114,7 @@ struct Client {
         is_received_get_request = false;
         is_closed = false;
         is_data_cached = false;
+        is_connected = false;
     }
 
     void add_result_to_cache() {
@@ -347,27 +348,10 @@ int move_end_client_in_buffer(int i, ssize_t received) {
     return result;
 }
 
-void delete_finished_clients() {
-    //fprintf(stderr, "\nClients size before clean: %ld\n", clients.size());
-    rest_clients.clear();
-    for (int i = 0; i < clients_to_delete.size(); ++i) {
-        if (clients[i]->is_closed) {
-            //fprintf(stderr, "%d - delete\n", i);
-            delete clients[i];
-        }
-        else {
-            //fprintf(stderr, "%d - rest, buf: %d, %d\n", i, clients[i]->buffer_in->buf, clients[i]->buffer_out->buf);
-            rest_clients.push_back(clients[i]);
-        }
-    }
-    clients = rest_clients;
-    //fprintf(stderr, "Clients size after clean: %ld\n", clients.size());
-}
-
 void receive_request_from_client(int i) {
     Buffer * client_buffer_in = clients[i]->buffer_in;
     ssize_t received = recv(clients[i]->my_socket, client_buffer_in->buf + client_buffer_in->end,
-                            client_buffer_in->size - client_buffer_in->end, 0);
+                           client_buffer_in->size - client_buffer_in->end, 0);
 
     switch (received) {
         case -1:
@@ -412,8 +396,10 @@ void receive_request_from_client(int i) {
 }
 
 void send_answer_to_client(int i) {
-    if (    !clients[i]->is_closed &&
-            clients[i]->buffer_out->end > clients[i]->buffer_out->start)
+    bool flag_sent_answer_to_client = !clients_to_delete[i];
+    while (flag_sent_answer_to_client &&
+           clients[i]->is_received_get_request &&
+           clients[i]->buffer_out->end > clients[i]->buffer_out->start)
     {
         fprintf(stderr, "\nHave data to send to client %d\n", i);
         Buffer * client_buffer_out = clients[i]->buffer_out;
@@ -426,15 +412,34 @@ void send_answer_to_client(int i) {
                 clients[i]->is_correct_my_socket = false;
                 clients_to_delete[i] = true;
                 clients[i]->set_closed_incorrect();
+                flag_sent_answer_to_client = false;
                 break;
             case 0:
                 clients_to_delete[i] = true;
                 clients[i]->set_closed_correct();
+                flag_sent_answer_to_client = false;
                 break;
             default:
                 client_buffer_out->start += sent;
         }
     }
+}
+
+void delete_finished_clients() {
+    fprintf(stderr, "\nClients size before clean: %ld\n", clients.size());
+    rest_clients.clear();
+    for (int i = 0; i < clients_to_delete.size(); ++i) {
+        if (clients[i]->is_closed) {
+            //fprintf(stderr, "%d - delete\n", i);
+            delete clients[i];
+        }
+        else {
+            //fprintf(stderr, "%d - rest, buf: %d, %d\n", i, clients[i]->buffer_in->buf, clients[i]->buffer_out->buf);
+            rest_clients.push_back(clients[i]);
+        }
+    }
+    clients = rest_clients;
+    fprintf(stderr, "Clients size after clean: %ld\n", clients.size());
 }
 
 void receive_server_response(int i) {
@@ -451,18 +456,15 @@ void receive_server_response(int i) {
             break;
         case 0:
             fprintf(stderr, "Close http connection\n");
-            if (0 != close(clients[i]->http_socket)) {
-                perror("close");
-                clients[i]->set_closed_incorrect();
-                break;
-            }
+            close(clients[i]->http_socket);
             clients[i]->http_socket = -1;
             break;
         default:
             client_buffer_out->end += received;
             if (client_buffer_out->end == client_buffer_out->size) {
                 size_t new_size_buf = client_buffer_out->size * 2;
-                if (-1 == client_buffer_out->resize(new_size_buf)) {
+                int res = client_buffer_out->resize(new_size_buf);
+                if (-1 == res) {
                     clients_to_delete[i] = true;
                     clients[i]->set_closed_incorrect();
                     break;
@@ -475,14 +477,17 @@ void receive_server_response(int i) {
 }
 
 void send_request_to_server(int i) {
-    bool have_data_to_send = clients[i]->buffer_server_request->end > clients[i]->buffer_server_request->start;
-    if (!clients[i]->is_data_cached && have_data_to_send) {
+    bool flag_send_request_to_server = !clients_to_delete[i];
+    while ( flag_send_request_to_server &&
+            clients[i]->is_received_get_request &&
+            !clients[i]->is_data_cached &&
+            clients[i]->buffer_server_request->end > clients[i]->buffer_server_request->start) {
         fprintf(stderr, "\nHave data to send to http server (i):%d (fd):%d\n", i, clients[i]->http_socket);
 
         Buffer * client_buffer_in = clients[i]->buffer_server_request;
         ssize_t sent = send(clients[i]->http_socket, client_buffer_in->buf,
                             (size_t)(client_buffer_in->end - client_buffer_in->start), 0);
-        fprintf(stderr, "Sent to http: %ld, %ld\n", sent, client_buffer_in->end - client_buffer_in->start);
+        fprintf(stderr, "Sent to http: %ld, %d\n", sent, client_buffer_in->end - client_buffer_in->start);
 
         switch (sent) {
             case -1:
@@ -490,14 +495,12 @@ void send_request_to_server(int i) {
                 clients[i]->is_correct_http_socket = false;
                 clients_to_delete[i] = true;
                 clients[i]->set_closed_incorrect();
+                flag_send_request_to_server = false;
                 break;
             case 0:
-                if (0 != close(clients[i]->http_socket)) {
-                    perror("close");
-                    clients[i]->set_closed_incorrect();
-                    break;
-                }
+                close(clients[i]->http_socket);
                 clients[i]->http_socket = -1;
+                flag_send_request_to_server = false;
                 break;
             default:
                 client_buffer_in->start += sent;
@@ -543,10 +546,9 @@ int main(int argc, char *argv[]) {
         }
 
         int activity = select(max_fd + 1, &fds_read, &fds_write, NULL, NULL);
-        //fprintf(stderr, "Activity: %d\n", activity);
+        fprintf(stderr, "Activity: %d\n", activity);
         if (-1 == activity) {
             perror("Error while select()");
-            exit(EXIT_FAILURE);
             continue;
         }
         else if (0 == activity) {
@@ -565,14 +567,10 @@ int main(int argc, char *argv[]) {
                 fprintf(stderr, "Have data from client %d\n", i);
                 receive_request_from_client(i);
             }
-            if (clients[i]->is_closed) {
-                continue;
+            if (FD_ISSET(clients[i]->my_socket, &fds_write)) {
+                //send_request_to_server(i);
             }
-            if (!clients[i]->is_data_cached && clients[i]->is_received_get_request &&
-                    -1 != clients[i]->http_socket && FD_ISSET(clients[i]->http_socket, &fds_write))
-            {
-                send_request_to_server(i);
-            }
+            send_request_to_server(i);
         }
 
         delete_finished_clients();
@@ -582,16 +580,12 @@ int main(int argc, char *argv[]) {
             if (!clients[i]->is_received_get_request) {
                 continue;
             }
-            if (!clients[i]->is_data_cached && FD_ISSET(clients[i]->http_socket, &fds_read)) {
+
+            if (clients[i]->is_received_get_request && FD_ISSET(clients[i]->http_socket, &fds_read)) {
                 fprintf(stderr, "Have data (http response), (id):%d\n", i);
                 receive_server_response(i);
             }
-            if (clients[i]->is_closed) {
-                continue;
-            }
-            if (FD_ISSET(clients[i]->my_socket, &fds_write)) {
-                send_answer_to_client(i);
-            }
+            send_answer_to_client(i);
         }
 
         delete_finished_clients();
