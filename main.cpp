@@ -21,7 +21,7 @@
 
 std::ofstream out_to_file("output.txt");
 
-struct Buffer {
+/*struct Buffer {
     char * buf;
     size_t start;
     size_t end;
@@ -82,7 +82,7 @@ struct Buffer {
         }
         fprintf(stderr, "Done\n");
     }
-};
+};*/
 
 std::map<std::pair<std::string, std::string>, std::pair<char *, size_t>> m_cache;
 
@@ -413,9 +413,7 @@ void receive_request_from_client(int i) {
 }
 
 void send_answer_to_client(int i) {
-    if (    !clients[i]->is_closed &&
-            clients[i]->buffer_out->end > clients[i]->buffer_out->start)
-    {
+    if (!clients[i]->is_closed && clients[i]->buffer_out->end > clients[i]->buffer_out->start) {
         fprintf(stderr, "\nHave data to send to client %d\n", i);
         Buffer * client_buffer_out = clients[i]->buffer_out;
         ssize_t sent = send(clients[i]->my_socket, client_buffer_out->buf + client_buffer_out->start,
