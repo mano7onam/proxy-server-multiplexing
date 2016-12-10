@@ -4,7 +4,7 @@ std::ofstream out_to_file("output.txt");
 
 std::map<std::pair<std::string, std::string>, std::pair<char *, size_t>> m_cache;
 
-struct Client {
+/*struct Client {
     int my_socket;
     int http_socket;
     bool is_correct_my_socket;
@@ -65,7 +65,7 @@ struct Client {
         delete buffer_server_request;
         delete buffer_out;
     }
-};
+};*/
 
 int server_socket;
 std::vector<Client*> clients;
