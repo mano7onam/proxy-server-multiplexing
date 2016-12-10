@@ -17,15 +17,41 @@ class Buffer {
 public:
     Buffer(size_t size);
 
-    size_t get_data_size();
+    bool is_have_data() {
+        return end - start > 0U;
+    }
 
-    bool is_have_data();
+    size_t get_data_size() {
+        return end - start;
+    }
 
-    size_t get_empty_space_size();
+    size_t get_empty_space_size() {
+        return size - end;
+    }
 
-    char * get_start();
+    size_t get_capacity() {
+        return size;
+    }
 
-    char * get_end();
+    char * get_buf() {
+        return buf;
+    }
+
+    size_t get_i_end() {
+        return end;
+    }
+
+    size_t get_i_start() {
+        return start;
+    }
+
+    char * get_start() {
+        return buf + start;
+    }
+
+    char * get_end() {
+        return buf + end;
+    }
 
     int do_resize(size_t new_size);
 

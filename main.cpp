@@ -1,78 +1,19 @@
 #include "Includes.h"
 
+#include "Client.h"
+
 std::ofstream out_to_file("output.txt");
 
-std::map<std::pair<std::string, std::string>, std::pair<char *, size_t>> m_cache;
+Cache * cache;
 
-/*struct Client {
-    int my_socket;
-    int http_socket;
-    bool is_correct_my_socket;
-    bool is_correct_http_socket;
-    Buffer * buffer_in;
-    Buffer * buffer_server_request;
-    Buffer * buffer_out;
-    bool is_received_get_request;
-    bool is_closed;
-    bool is_closed_correct;
-    bool is_data_cached;
-    struct sockaddr_in dest_addr;
-    int poll_id;
-    long long last_time_activity;
-    std::pair<std::string, std::string> first_line_and_host;
+int my_server_socket;
 
-    Client(int my_socket, size_t size_buf) {
-        this->my_socket = my_socket;
-        this->http_socket = -1;
-        is_correct_my_socket = true;
-        is_correct_http_socket = true;
-        buffer_in = new Buffer(size_buf);
-        buffer_out = new Buffer(size_buf);
-        buffer_server_request = new Buffer(size_buf);
-        is_received_get_request = false;
-        is_closed = false;
-        is_data_cached = false;
-    }
-
-    void add_result_to_cache() {
-        if (!m_cache.count(first_line_and_host)) {
-            size_t size_data = buffer_out->end;
-            char * data = (char*)malloc(size_data);
-            memcpy(data, buffer_out->buf, size_data);
-            m_cache[first_line_and_host] = std::make_pair(data, size_data);
-        }
-    }
-
-    void set_closed_correct() {
-        is_closed = true;
-        is_closed_correct = true;
-    }
-
-    void set_closed_incorrect() {
-        is_closed = true;
-        is_closed_correct = false;
-    }
-
-    ~Client() {
-        fprintf(stderr, "Destructor client!!!!\n");
-        if (is_correct_my_socket) {
-            close(my_socket);
-        }
-        if (is_closed_correct) {
-            add_result_to_cache();
-        }
-        delete buffer_in;
-        delete buffer_server_request;
-        delete buffer_out;
-    }
-};*/
-
-int server_socket;
 std::vector<Client*> clients;
 
-void init_server_socket(unsigned short server_port) {
-    server_socket = socket(PF_INET, SOCK_STREAM, 0);
-    if (-1 == server_socket) {
+void init_my_server_socket(unsigned short server_port) {
+    my_server_socket = socket(PF_INET, SOCK_STREAM, 0);
+
+    if (-1 == my_server_socket) {
         perror("Error while creating serverSocket");
         exit(EXIT_FAILURE);
     }
@@ -82,12 +23,12 @@ void init_server_socket(unsigned short server_port) {
     server_address.sin_addr.s_addr = htonl(INADDR_ANY);
     server_address.sin_port = htons(server_port);
 
-    if (-1 == (bind(server_socket, (struct sockaddr *)&server_address, sizeof(server_address)))) {
+    if (bind(my_server_socket, (struct sockaddr *)&server_address, sizeof(server_address))) {
         perror("Error while binding");
         exit(EXIT_FAILURE);
     }
 
-    if (-1 == listen(server_socket, 1024)) {
+    if (listen(my_server_socket, 1024)) {
         perror("Error while listen()");
         exit(EXIT_FAILURE);
     }
@@ -96,21 +37,17 @@ void init_server_socket(unsigned short server_port) {
 void accept_incoming_connection() {
     struct sockaddr_in client_address;
     int address_size = sizeof(sockaddr_in);
-    int client_socket = accept(server_socket, (struct sockaddr *)&client_address,
-                               (socklen_t *)&address_size);
+
+    int client_socket = accept(my_server_socket, (struct sockaddr *)&client_address, (socklen_t *)&address_size);
 
     if (client_socket <= 0) {
-        perror("Error while accept()");
+        perror("accept");
         exit(EXIT_FAILURE);
     }
 
-    Client * new_actor = new Client(client_socket, DEFAULT_BUFFER_SIZE);
-    clients.push_back(new_actor);
+    Client * new_client = new Client(client_socket, cache);
+    clients.push_back(new_client);
 }
-
-// two auxiliary vectors to delete closed on uncorrect clients
-std::vector<bool> clients_to_delete;
-std::vector<Client*> rest_clients;
 
 std::pair<std::string, std::string> parse_hostname_and_path(char * uri) {
     char host_name[LITTLE_STRING_SIZE];
@@ -144,21 +81,23 @@ std::pair<std::string, std::string> parse_hostname_and_path(char * uri) {
 
 // return host name and first line to server GET request
 // "" - when any error in parsing
-std::pair<std::string, std::string> get_new_first_line_and_hostname(int i, char * p_new_line) {
-    Buffer * client_buffer_in = clients[i]->buffer_in;
+std::pair<std::string, std::string> get_new_first_line_and_hostname(Client * client, char * p_new_line) {
+    Buffer * client_buffer_in = client->get_buffer_in();
 
-    if (client_buffer_in->size < 3 ||
-        client_buffer_in->buf[0] != 'G' ||
-        client_buffer_in->buf[1] != 'E' ||
-        client_buffer_in->buf[2] != 'T')
+    if (client_buffer_in->get_data_size() < 3 ||
+        client_buffer_in->get_start()[0] != 'G' ||
+        client_buffer_in->get_start()[1] != 'E' ||
+        client_buffer_in->get_start()[2] != 'T')
     {
         fprintf(stderr, "Not GET request\n");
         return std::make_pair("", "");
     }
 
     char first_line[LITTLE_STRING_SIZE];
-    size_t first_line_length = p_new_line - client_buffer_in->buf;
-    strncpy(first_line, client_buffer_in->buf, first_line_length);
+
+    size_t first_line_length = p_new_line - client_buffer_in->get_start();
+    strncpy(first_line, client_buffer_in->get_start(), first_line_length);
+
     first_line[first_line_length] = '\0';
     fprintf(stderr, "First line from client: %s\n", first_line);
 
@@ -171,12 +110,15 @@ std::pair<std::string, std::string> get_new_first_line_and_hostname(int i, char 
     fprintf(stderr, "version: %s\n", version);
 
     std::pair<std::string, std::string> parsed = parse_hostname_and_path(uri);
+
     std::string host_name = parsed.first;
     std::string path = parsed.second;
+
     if ("" == host_name || "" == path) {
         fprintf(stderr, "Hostname or path haven't been parsed\n");
         return std::make_pair("", "");
     }
+
     fprintf(stderr, "HostName: \'%s\'\n", host_name.c_str());
     fprintf(stderr, "Path: %s\n", path.c_str());
 
@@ -186,239 +128,329 @@ std::pair<std::string, std::string> get_new_first_line_and_hostname(int i, char 
     return std::make_pair(host_name, new_first_line);
 }
 
-void push_first_data_request(int i, std::string new_first_line, Buffer * client_buffer_in, size_t i_next_line) {
-    size_t size_without_first_line = client_buffer_in->end - i_next_line;
-    clients[i]->buffer_server_request->add_data_to_end(new_first_line.c_str(), new_first_line.size());
-    clients[i]->buffer_server_request->add_symbol_to_end('\n');
-    clients[i]->buffer_server_request->add_data_to_end(client_buffer_in->buf + i_next_line, size_without_first_line);
-    clients[i]->buffer_server_request->buf[clients[i]->buffer_server_request->end] = '\0';
-    client_buffer_in->start = client_buffer_in->end;
-    fprintf(stderr, "\n!!!!! New request: \n%s\n\n", clients[i]->buffer_server_request->buf);
+void push_first_data_request(Client * client, std::string first_line, Buffer * buffer_in, size_t i_next_line) {
+    size_t size_without_first_line = (buffer_in->get_end() - buffer_in->get_start()) - i_next_line;
+
+    Buffer * buffer_request = client->get_buffer_server_request();
+
+    buffer_request->add_symbol_to_end('\n');
+    buffer_request->add_data_to_end(buffer_in->get_start() + i_next_line, size_without_first_line);
+    buffer_request->add_data_to_end(first_line.c_str(), first_line.size());
+
+    buffer_request->get_end()[0] = '\0';
+    fprintf(stderr, "\n!!!!! New request: \n%s\n\n", buffer_request->get_start());
+
+    buffer_in->do_move_start(buffer_in->get_data_size());
 }
 
-void push_first_data_request_from_cache(int i, std::pair<char*, size_t> cache) {
-    clients[i]->is_data_cached = true;
-    Buffer * buffer = clients[i]->buffer_server_request;
-    buffer->add_data_to_end(cache.first, cache.second);
+void push_data_to_request_from_cache(Client * client, std::pair<char*, size_t> data) {
+    client->set_data_cached();
+
+    Buffer * buffer_request = client->get_buffer_server_request();
+    buffer_request->add_data_to_end(data.first, data.second);
 }
 
-int create_tcp_connection_to_request(int i, std::string host_name) {
+int create_tcp_connection_to_request(Client * client, std::string host_name) {
     struct hostent * host_info = gethostbyname(host_name.c_str());
+
     if (NULL == host_info) {
-        perror("Error while gethostbyname");
+        perror("gethostbyname");
         return RESULT_INCORRECT;
     }
 
-    int http_socket = socket(AF_INET, SOCK_STREAM, 0);
+    int http_socket = socket(PF_INET, SOCK_STREAM, 0);
+
     if (-1 == http_socket) {
-        perror("Error while socket()");
+        perror("socket");
         return RESULT_INCORRECT;
     }
 
     struct sockaddr_in dest_addr;
-    dest_addr.sin_family = AF_INET;
+    dest_addr.sin_family = PF_INET;
     dest_addr.sin_port = htons(DEFAULT_PORT);
     memcpy(&dest_addr.sin_addr, host_info->h_addr, host_info->h_length);
-    clients[i]->dest_addr = dest_addr;
 
-    if (-1 == connect(http_socket, (struct sockaddr *)&dest_addr, sizeof(dest_addr))) {
-        perror("Error while connect()");
+    if (connect(http_socket, (struct sockaddr *)&dest_addr, sizeof(dest_addr))) {
+        perror("connect");
         return RESULT_INCORRECT;
     }
-    clients[i]->http_socket = http_socket;
+
+    client->set_http_socket(http_socket);
+
     return RESULT_CORRECT;
 }
 
-int handle_first_line_proxy_request(int i, char * p_new_line, size_t i_next_line) {
-    Buffer * client_buffer_in = clients[i]->buffer_in;
+int handle_first_line_proxy_request(Client * client, char * p_new_line, size_t i_next_line) {
+    Buffer * buffer_in = client->get_buffer_in();
 
-    std::pair<std::string, std::string> parsed = get_new_first_line_and_hostname(i, p_new_line);
+    std::pair<std::string, std::string> parsed = get_new_first_line_and_hostname(client, p_new_line);
+
     std::string host_name = parsed.first;
     std::string new_first_line = parsed.second;
-    fprintf(stderr, "Hostname: %s\n", host_name.c_str());
-    fprintf(stderr, "New first line: %s\n", new_first_line.c_str());
+
     if ("" == host_name || "" == new_first_line) {
         fprintf(stderr, "Can not correctly parse first line\n");
         return RESULT_INCORRECT;
     }
 
-    if (/*false && */m_cache.count(parsed)) {
-        push_first_data_request_from_cache(i, m_cache[parsed]);
+    fprintf(stderr, "Hostname: %s\n", host_name.c_str());
+    fprintf(stderr, "New first line: %s\n", new_first_line.c_str());
+
+    if (cache->is_in_cache(parsed)) {
+        Record record = cache->get_from_cache(parsed);
+        push_data_to_request_from_cache(client, std::make_pair(record.data, record.size));
+
         return RESULT_CORRECT;
     }
     else {
-        push_first_data_request(i, new_first_line, client_buffer_in, i_next_line);
-        int result_connection = create_tcp_connection_to_request(i, host_name);
+        push_first_data_request(client, new_first_line, buffer_in, i_next_line);
+        int result_connection = create_tcp_connection_to_request(client, host_name);
+
         return result_connection;
     }
 }
 
-int move_end_client_in_buffer(int i, ssize_t received) {
-    int result = RESULT_CORRECT;
-    Buffer * client_buffer_in = clients[i]->buffer_in;
-    client_buffer_in->end += received;
-    if (client_buffer_in->end == client_buffer_in->size) {
-        size_t new_size = client_buffer_in->size * 2;
-        result = client_buffer_in->resize(new_size);
-    }
-    client_buffer_in->buf[client_buffer_in->end] = '\0';
-    fprintf(stderr, "\nReceived from client: \n%s\n\n", client_buffer_in->buf);
-    return result;
+int move_end_client_in_buffer(Client * client, ssize_t received) {
+    Buffer * client_buffer_in = client->get_buffer_in();
+    client_buffer_in->do_move_end(received);
+    return RESULT_CORRECT;
 }
 
 void delete_finished_clients() {
     //fprintf(stderr, "\nClients size before clean: %ld\n", clients.size());
-    rest_clients.clear();
-    for (int i = 0; i < clients.size(); ++i) {
-        if (clients[i]->is_closed) {
-            //fprintf(stderr, "%d - delete\n", i);
-            delete clients[i];
+    std::vector<Client*> rest_clients;
+
+    for (auto client : clients) {
+        if (client->is_closed()) {
+            delete client;
         }
         else {
-            //fprintf(stderr, "%d - rest, buf: %d, %d\n", i, clients[i]->buffer_in->buf, clients[i]->buffer_out->buf);
-            rest_clients.push_back(clients[i]);
+            rest_clients.push_back(client);
         }
     }
+
     clients = rest_clients;
     //fprintf(stderr, "Clients size after clean: %ld\n", clients.size());
 }
 
-void receive_request_from_client(int i) {
-    Buffer * client_buffer_in = clients[i]->buffer_in;
-    ssize_t received = recv(clients[i]->my_socket, client_buffer_in->buf + client_buffer_in->end,
-                            client_buffer_in->size - client_buffer_in->end, 0);
+void receive_request_from_client(Client * client) {
+    Buffer * buffer_in = client->get_buffer_in();
+    ssize_t received = recv(client->get_my_socket(), buffer_in->get_end(), buffer_in->get_empty_space_size(), 0);
 
     switch (received) {
         case -1:
             perror("Error while read()");
-            clients[i]->is_correct_my_socket = false;
-            clients[i]->set_closed_incorrect();
-            clients_to_delete[i] = true;
+            client->set_closed_incorrect();
             break;
+
         case 0:
             fprintf(stderr, "Close client\n");
-            clients_to_delete[i] = true;
-            clients[i]->set_closed_correct();
+            client->set_closed_correct();
             break;
+
         default:
-            int res = move_end_client_in_buffer(i, received);
+            int res = buffer_in->do_move_end(received);
+
             if (RESULT_INCORRECT == res) {
-                clients_to_delete[i] = true;
-                clients[i]->set_closed_incorrect();
+                client->set_closed_incorrect();
                 break;
             }
 
-            if (!clients[i]->is_received_get_request) {
-                char * p_new_line = strchr(client_buffer_in->buf, '\n');
+            if (!client->is_received_get_request()) {
+                char * p_new_line = strchr(buffer_in->get_start(), '\n');
+
                 if (p_new_line != NULL) {
-                    clients[i]->is_received_get_request = true;
-                    size_t i_next_line = (p_new_line - client_buffer_in->buf) + 1;
-                    int result = handle_first_line_proxy_request(i, p_new_line, i_next_line);
+                    client->set_received_get_request();
+
+                    size_t i_next_line = (p_new_line - buffer_in->get_start()) + 1;
+
+                    int result = handle_first_line_proxy_request(client, p_new_line, i_next_line);
+
                     if (RESULT_INCORRECT == result) {
-                        clients_to_delete[i] = true;
-                        clients[i]->set_closed_incorrect();
+                        client->set_closed_incorrect();
                         break;
                     }
                 }
             }
             else {
-                char * from = client_buffer_in->buf + client_buffer_in->start;
-                size_t size_data = (client_buffer_in->end - client_buffer_in->start);
-                clients[i]->buffer_server_request->add_data_to_end(from, size_data);
-                client_buffer_in->start = client_buffer_in->end;
+                Buffer * buffer_request = client->get_buffer_server_request();
+
+                buffer_request->add_data_to_end(buffer_in->get_start(), buffer_in->get_data_size());
+                buffer_in->do_move_start(buffer_in->get_data_size());
             }
     }
 }
 
-void send_answer_to_client(int i) {
-    if (!clients[i]->is_closed && clients[i]->buffer_out->end > clients[i]->buffer_out->start) {
-        fprintf(stderr, "\nHave data to send to client %d\n", i);
-        Buffer * client_buffer_out = clients[i]->buffer_out;
-        ssize_t sent = send(clients[i]->my_socket, client_buffer_out->buf + client_buffer_out->start,
-                            (size_t)(client_buffer_out->end - client_buffer_out->start), 0);
+void send_answer_to_client(Client * client) {
+    Buffer * buffer_out = client->get_buffer_out();
+
+    if (!client->is_closed() && buffer_out->is_have_data()) {
+        fprintf(stderr, "\nHave data to send to client\n");
+
+        ssize_t sent = send(client->get_my_socket(), buffer_out->get_start(), buffer_out->get_data_size(), 0);
+
         fprintf(stderr, "Sent: %ld\n", sent);
+
         switch (sent) {
             case -1:
                 perror("Error while send to client");
-                clients[i]->is_correct_my_socket = false;
-                clients_to_delete[i] = true;
-                clients[i]->set_closed_incorrect();
+                client->set_closed_incorrect();
                 break;
+
             case 0:
-                clients_to_delete[i] = true;
-                clients[i]->set_closed_correct();
+                client->set_closed_correct();
                 break;
+
             default:
-                client_buffer_out->start += sent;
+                buffer_out->do_move_start(sent);
         }
     }
 }
 
-void receive_server_response(int i) {
-    Buffer * client_buffer_out = clients[i]->buffer_out;
-    ssize_t received = recv(clients[i]->http_socket, client_buffer_out->buf + client_buffer_out->end,
-                            (size_t)(client_buffer_out->size - client_buffer_out->end), 0);
+void receive_server_response(Client * client) {
+    Buffer * buffer_out = client->get_buffer_out();
+    ssize_t received = recv(client->get_http_socket(), buffer_out->get_end(), buffer_out->get_empty_space_size(), 0);
 
     switch (received) {
         case -1:
             perror("recv(http)");
-            clients[i]->is_correct_http_socket = false;
-            clients_to_delete[i] = true;
-            clients[i]->set_closed_incorrect();
+            client->set_closed_incorrect();
             break;
+
         case 0:
             fprintf(stderr, "Close http connection\n");
-            if (0 != close(clients[i]->http_socket)) {
+
+            if (0 != close(client->get_http_socket())) {
                 perror("close");
-                clients[i]->set_closed_incorrect();
+                client->set_closed_incorrect();
                 break;
             }
-            clients[i]->http_socket = -1;
+
+            client->set_http_socket(-1);
             break;
+
         default:
-            client_buffer_out->end += received;
-            if (client_buffer_out->end == client_buffer_out->size) {
-                size_t new_size_buf = client_buffer_out->size * 2;
-                if (-1 == client_buffer_out->resize(new_size_buf)) {
-                    clients_to_delete[i] = true;
-                    clients[i]->set_closed_incorrect();
-                    break;
-                }
-            }
-            client_buffer_out->buf[client_buffer_out->end] ='\0';
-            fprintf(stderr, "\n\nReceived from http:\n%s\n\n", client_buffer_out->buf);
-            out_to_file << client_buffer_out->buf << std::endl << std::endl;
+            buffer_out->do_move_end(received);
     }
 }
 
-void send_request_to_server(int i) {
-    bool have_data_to_send = clients[i]->buffer_server_request->end > clients[i]->buffer_server_request->start;
-    if (!clients[i]->is_data_cached && have_data_to_send) {
-        fprintf(stderr, "\nHave data to send to http server (i):%d (fd):%d\n", i, clients[i]->http_socket);
+void send_request_to_server(Client * client) {
+    Buffer * buffer_request = client->get_buffer_server_request();
 
-        Buffer * client_buffer_in = clients[i]->buffer_server_request;
-        ssize_t sent = send(clients[i]->http_socket, client_buffer_in->buf,
-                            (size_t)(client_buffer_in->end - client_buffer_in->start), 0);
-        fprintf(stderr, "Sent to http: %ld, %ld\n", sent, client_buffer_in->end - client_buffer_in->start);
+    if (!client->is_data_cached() && buffer_request->is_have_data()) {
+        fprintf(stderr, "\nHave data to send to http server\n");
+
+        ssize_t sent = send(client->get_http_socket(), buffer_request->get_start(), buffer_request->get_data_size(), 0);
 
         switch (sent) {
             case -1:
                 perror("Error while send(http)");
-                clients[i]->is_correct_http_socket = false;
-                clients_to_delete[i] = true;
-                clients[i]->set_closed_incorrect();
+                client->set_closed_incorrect();
                 break;
+
             case 0:
-                if (0 != close(clients[i]->http_socket)) {
+                if (0 != close(client->get_http_socket())) {
                     perror("close");
-                    clients[i]->set_closed_incorrect();
+                    client->set_closed_incorrect();
                     break;
                 }
-                clients[i]->http_socket = -1;
+
+                client->set_http_socket(-1);
+
                 break;
+
             default:
-                client_buffer_in->start += sent;
+                buffer_request->do_move_start(sent);
         }
+    }
+}
+
+void start_main_loop() {
+    bool flag_execute = true;
+
+    for ( ; flag_execute ; ) {
+        fd_set fds_read;
+        fd_set fds_write;
+        FD_ZERO(&fds_read);
+        FD_ZERO(&fds_write);
+        int max_fd = 0;
+
+        FD_SET(my_server_socket, &fds_read);
+        max_fd = my_server_socket;
+
+        for (auto client : clients) {
+            FD_SET(client->get_my_socket(), &fds_read);
+
+            if (client->get_buffer_out()->is_have_data()) {
+                FD_SET(client->get_my_socket(), &fds_write);
+            }
+
+            max_fd = std::max(max_fd, client->get_my_socket());
+
+            if (client->is_received_get_request() && -1 != client->get_http_socket()) {
+                FD_SET(client->get_http_socket(), &fds_read);
+
+                if (client->get_buffer_server_request()->is_have_data()) {
+                    FD_SET(client->get_http_socket(), &fds_write);
+                }
+
+                max_fd = std::max(max_fd, client->get_http_socket());
+            }
+        }
+
+        int activity = select(max_fd + 1, &fds_read, &fds_write, NULL, NULL);
+
+        if (activity <= 0) {
+            perror("select");
+            continue;
+        }
+
+        if (FD_ISSET(my_server_socket, &fds_read)) {
+            fprintf(stderr, "Have incoming client connection\n");
+            accept_incoming_connection();
+        }
+
+        for (auto client : clients) {
+            if (FD_ISSET(client->get_my_socket(), &fds_read)) {
+                fprintf(stderr, "Have data from client\n");
+                receive_request_from_client(client);
+            }
+
+            if (client->is_closed()) {
+                continue;
+            }
+
+            if (!client->is_data_cached() &&
+                client->is_received_get_request() &&
+                -1 != client->get_http_socket() &&
+                FD_ISSET(client->get_http_socket(), &fds_write))
+            {
+                send_request_to_server(client);
+            }
+        }
+
+        delete_finished_clients();
+
+        for (auto client : clients) {
+            if (!client->is_received_get_request()) {
+                continue;
+            }
+
+            if (!client->is_data_cached() && FD_ISSET(client->get_http_socket(), &fds_read)) {
+                fprintf(stderr, "Have data (http response)\n");
+                receive_server_response(client);
+            }
+
+            if (client->is_closed()) {
+                continue;
+            }
+
+            if (FD_ISSET(client->get_my_socket(), &fds_write)) {
+                send_answer_to_client(client);
+            }
+        }
+
+        delete_finished_clients();
     }
 }
 
@@ -435,96 +467,18 @@ int main(int argc, char *argv[]) {
         perror("Wrong port for listening");
         exit(EXIT_FAILURE);
     }
-    init_server_socket(server_port);
+    init_my_server_socket(server_port);
 
-    bool flag_execute = true;
-    for ( ; flag_execute ; ) {
-        fd_set fds_read;
-        fd_set fds_write;
-        FD_ZERO(&fds_read);
-        FD_ZERO(&fds_write);
-        int max_fd = 0;
+    start_main_loop();
 
-        FD_SET(server_socket, &fds_read);
-        max_fd = server_socket;
-
-        for (auto client : clients) {
-            FD_SET(client->my_socket, &fds_read);
-            FD_SET(client->my_socket, &fds_write);
-            max_fd = std::max(max_fd, client->my_socket);
-            if (client->is_received_get_request && -1 != client->http_socket) {
-                FD_SET(client->http_socket, &fds_read);
-                FD_SET(client->http_socket, &fds_write);
-                max_fd = std::max(max_fd, client->http_socket);
-            }
-        }
-
-        int activity = select(max_fd + 1, &fds_read, &fds_write, NULL, NULL);
-        //fprintf(stderr, "Activity: %d\n", activity);
-        if (-1 == activity) {
-            perror("Error while select()");
-            exit(EXIT_FAILURE);
-            continue;
-        }
-        else if (0 == activity) {
-            perror("poll() returned 0");
-            continue;
-        }
-
-        if (FD_ISSET(server_socket, &fds_read)) {
-            fprintf(stderr, "Have incoming client connection\n");
-            accept_incoming_connection();
-        }
-
-        clients_to_delete.assign(clients.size(), false);
-        for (int i = 0; i < clients.size(); ++i) {
-            if (FD_ISSET(clients[i]->my_socket, &fds_read)) {
-                fprintf(stderr, "Have data from client %d\n", i);
-                receive_request_from_client(i);
-            }
-            if (clients[i]->is_closed) {
-                continue;
-            }
-            if (!clients[i]->is_data_cached && clients[i]->is_received_get_request &&
-                    -1 != clients[i]->http_socket && FD_ISSET(clients[i]->http_socket, &fds_write))
-            {
-                send_request_to_server(i);
-            }
-        }
-
-        delete_finished_clients();
-
-        clients_to_delete.assign(clients.size(), false);
-        for (int i = 0; i < clients.size(); ++i) {
-            if (!clients[i]->is_received_get_request) {
-                continue;
-            }
-            if (!clients[i]->is_data_cached && FD_ISSET(clients[i]->http_socket, &fds_read)) {
-                fprintf(stderr, "Have data (http response), (id):%d\n", i);
-                receive_server_response(i);
-            }
-            if (clients[i]->is_closed) {
-                continue;
-            }
-            if (FD_ISSET(clients[i]->my_socket, &fds_write)) {
-                send_answer_to_client(i);
-            }
-        }
-
-        delete_finished_clients();
-    }
-
-    // free cache
-    for (auto record : m_cache) {
-        free(record.second.first);
-    }
+    delete cache;
 
     // close clients
     for (auto client : clients) {
         delete client;
     }
 
-    close(server_socket);
+    close(my_server_socket);
 
     return 0;
 }

@@ -20,6 +20,5 @@
 #include <fstream>
 
 #include "Constants.h"
-#include "Buffer.h"
 
 #endif //LITTLEPROXYSERVER_INCLUDES_H

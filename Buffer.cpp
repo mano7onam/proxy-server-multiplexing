@@ -19,26 +19,6 @@ Buffer::Buffer(size_t size) {
     }
 }
 
-char * Buffer::get_end() {
-    return buf + end;
-}
-
-char * Buffer::get_start() {
-    return buf + start;
-}
-
-size_t Buffer::get_data_size() {
-    return end - start;
-}
-
-bool Buffer::is_have_data() {
-    return start != end;
-}
-
-size_t Buffer::get_empty_space_size() {
-    return size - end;
-}
-
 int Buffer::do_resize(size_t new_size) {
     char * new_buf = (char *)realloc(buf, new_size);
 

@@ -5,6 +5,8 @@
 #ifndef PORTFORWARDERREDEAWROFTROP_CACHE_H
 #define PORTFORWARDERREDEAWROFTROP_CACHE_H
 
+#include "Includes.h"
+
 struct Record {
     char * data;
     int size;
