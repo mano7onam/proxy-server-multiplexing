@@ -11,12 +11,14 @@ Cache::Cache() {
 }
 
 bool Cache::is_in_cache(std::pair<std::string, std::string> key) {
-    fprintf(stderr, "is_in_cache\n");
-    //return cache.count(key);
-    return false;
+    fprintf(stderr, "Check in cache: %s %s\n", key.first.c_str(), key.second.c_str());
+
+    return (bool) cache.count(key);
 }
 
 Record Cache::get_from_cache(std::pair<std::string, std::string> key) {
+    fprintf(stderr, "Get from cache: %s %s\n", key.first.c_str(), key.second.c_str());
+
     if (!cache.count(key)) {
         Record record;
         record.data = NULL;
@@ -37,6 +39,8 @@ void Cache::delete_from_cache(std::pair<std::string, std::string> key) {
 }
 
 int Cache::push_to_cache(std::pair<std::string, std::string> key, char *value, size_t size_value) {
+    fprintf(stderr, "Push: %s %s\n", key.first.c_str(), key.second.c_str());
+
     if (cache.count(key)) {
         free(cache[key].data);
     }

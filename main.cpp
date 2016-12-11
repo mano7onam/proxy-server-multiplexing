@@ -179,6 +179,9 @@ void start_main_loop() {
             if (client->is_closed_http_socket() && !client->get_buffer_out()->is_have_data()) {
                 client->set_closed_correct();
             }
+            if (client->is_data_cached() && !client->get_buffer_out()->is_have_data()) {
+                client->set_closed_correct();
+            }
         }
 
         delete_finished_clients();
@@ -220,6 +223,8 @@ int main(int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
     init_my_server_socket(server_port);
+
+    cache = new Cache();
 
     start_main_loop();
 

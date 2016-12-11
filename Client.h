@@ -122,6 +122,8 @@ public:
 
     int handle_first_line_proxy_request(char * p_new_line, size_t i_next_line);
 
+    void push_data_to_request_from_cache(std::pair<char *, size_t> data);
+
     void receive_request_from_client();
 
     void send_answer_to_client();

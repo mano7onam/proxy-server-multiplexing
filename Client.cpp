@@ -84,6 +84,12 @@ int Client::create_tcp_connection_to_request(std::string host_name) {
     return RESULT_CORRECT;
 }
 
+void Client::push_data_to_request_from_cache(std::pair<char *, size_t> data) {
+    fprintf(stderr, "Put data from cache\n");
+    set_data_cached();
+    buffer_out->add_data_to_end(data.first, data.second);
+}
+
 int Client::handle_first_line_proxy_request(char *p_new_line, size_t i_next_line) {
     std::pair<std::string, std::string> parsed = Parser::get_new_first_line_and_hostname(buffer_in, p_new_line);
 
@@ -99,15 +105,17 @@ int Client::handle_first_line_proxy_request(char *p_new_line, size_t i_next_line
     fprintf(stderr, "Hostname: %s\n", host_name.c_str());
     fprintf(stderr, "New first line: %s\n", new_first_line.c_str());
 
-    if (false/* && cache->is_in_cache(parsed)*/) {
-        /*Record record = cache->get_from_cache(parsed);
-        push_data_to_request_from_cache(client, std::make_pair(record.data, record.size));*/
+    if (cache->is_in_cache(parsed)) {
+        Record record = cache->get_from_cache(parsed);
+        push_data_to_request_from_cache(std::make_pair(record.data, record.size));
 
         return RESULT_CORRECT;
     }
     else {
         Parser::push_first_data_request(buffer_server_request, buffer_in, new_first_line, i_next_line);
         int result_connection = create_tcp_connection_to_request(host_name);
+
+        first_line_and_host = parsed;
 
         return result_connection;
     }
@@ -254,9 +262,10 @@ Client::~Client() {
         close(http_socket);
     }
 
-    /*if (flag_closed_correct) {
+    if (flag_closed_correct) {
+        fprintf(stderr, "Add result to cache\n");
         add_result_to_cache();
-    }*/
+    }
 
     delete buffer_in;
     delete buffer_server_request;
