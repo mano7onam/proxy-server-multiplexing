@@ -25,7 +25,9 @@ class Client {
     bool flag_closed;
     bool flag_closed_correct;
     bool flag_closed_http_socket;
+
     bool flag_process_http_connecting;
+    int http_socket_flags;
 
     Cache * cache;
 

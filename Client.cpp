@@ -59,15 +59,27 @@ int Client::create_tcp_connection_to_request(std::string host_name) {
     dest_addr.sin_port = htons(DEFAULT_PORT);
     memcpy(&dest_addr.sin_addr, host_info->h_addr, host_info->h_length);
 
-    /*int flags = fcntl(http_socket, F_GETFL, 0);
-    fcntl(http_socket, F_SETFL, flags | O_NONBLOCK);*/
+    http_socket_flags = fcntl(http_socket, F_GETFL, 0);
+    fcntl(http_socket, F_SETFL, http_socket_flags | O_NONBLOCK);
 
     fprintf(stderr, "Before connect\n");
+
     if (connect(http_socket, (struct sockaddr *)&dest_addr, sizeof(dest_addr))) {
-        perror("connect");
-        return RESULT_INCORRECT;
+        if (errno == EINPROGRESS) {
+            fprintf(stderr, "Connect in progress\n");
+            flag_process_http_connecting = true;
+
+            return RESULT_CORRECT;
+        }
+        else {
+            perror("connect");
+
+            return RESULT_INCORRECT;
+        }
     }
-    fprintf(stderr, "After connect\n");
+
+    flag_process_http_connecting = false;
+    fprintf(stderr, "Connection established\n");
 
     return RESULT_CORRECT;
 }
@@ -174,6 +186,15 @@ void Client::send_answer_to_client() {
 
 void Client::receive_server_response() {
     fprintf(stderr, "Have data from server\n");
+
+    if (flag_process_http_connecting) {
+        fprintf(stderr, "Connection established\n");
+
+        fcntl(http_socket, F_SETFL, http_socket_flags);
+        flag_process_http_connecting = false;
+
+        return;
+    }
 
     ssize_t received = recv(http_socket, buffer_out->get_end(), buffer_out->get_empty_space_size(), 0);
 

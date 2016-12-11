@@ -9,7 +9,7 @@
 
 struct Record {
     char * data;
-    int size;
+    size_t size;
     long long last_time_use;
 };
 
