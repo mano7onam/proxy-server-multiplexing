@@ -3,13 +3,17 @@
 //
 
 #include "Cache.h"
+#include <iostream>
+#include <fstream>
 
 Cache::Cache() {
 
 }
 
 bool Cache::is_in_cache(std::pair<std::string, std::string> key) {
-    return cache.count(key);
+    fprintf(stderr, "is_in_cache\n");
+    //return cache.count(key);
+    return false;
 }
 
 Record Cache::get_from_cache(std::pair<std::string, std::string> key) {
@@ -41,4 +45,10 @@ int Cache::push_to_cache(std::pair<std::string, std::string> key, char *value, s
     memcpy(cache[key].data, value, size_value);
 
     cache[key].size = size_value;
+}
+
+Cache::~Cache() {
+    for (auto elem : cache) {
+        free(elem.second.data);
+    }
 }

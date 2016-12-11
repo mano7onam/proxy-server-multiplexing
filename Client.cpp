@@ -18,6 +18,7 @@ Client::Client(int my_socket, Cache * cache) {
     flag_received_get_request = false;
 
     flag_closed = false;
+    flag_closed_http_socket = false;
 
     flag_data_cached = false;
 
@@ -46,9 +47,9 @@ Client::~Client() {
         close(http_socket);
     }
 
-    if (flag_closed_correct) {
+    /*if (flag_closed_correct) {
         add_result_to_cache();
-    }
+    }*/
 
     delete buffer_in;
     delete buffer_server_request;

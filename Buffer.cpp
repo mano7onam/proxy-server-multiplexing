@@ -35,12 +35,15 @@ int Buffer::do_resize(size_t new_size) {
 }
 
 int Buffer::do_move_end(ssize_t received) {
+    fprintf(stderr, "Move end\n");
+
     end += received;
 
     if (end == size) {
         return do_resize(size * 2);
     }
 
+    fprintf(stderr, "Done moving\n");
     return RESULT_CORRECT;
 }
 

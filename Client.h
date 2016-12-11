@@ -23,6 +23,7 @@ class Client {
 
     bool flag_closed;
     bool flag_closed_correct;
+    bool flag_closed_http_socket;
 
     Cache * cache;
 
@@ -67,6 +68,14 @@ public:
 
     bool is_closed() {
         return flag_closed;
+    }
+
+    void set_close_http_socket() {
+        flag_closed_http_socket = true;
+    }
+
+    bool is_closed_http_socket() {
+        return flag_closed_http_socket;
     }
 
     void set_http_socket(int http_socket) {

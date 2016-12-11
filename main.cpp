@@ -13,7 +13,10 @@ std::vector<Client*> clients;
 void init_my_server_socket(unsigned short server_port) {
     my_server_socket = socket(PF_INET, SOCK_STREAM, 0);
 
-    if (-1 == my_server_socket) {
+    int one = 1;
+    setsockopt(my_server_socket, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
+
+    if (my_server_socket <= 0) {
         perror("Error while creating serverSocket");
         exit(EXIT_FAILURE);
     }
@@ -133,14 +136,18 @@ void push_first_data_request(Client * client, std::string first_line, Buffer * b
 
     Buffer * buffer_request = client->get_buffer_server_request();
 
-    buffer_request->add_symbol_to_end('\n');
-    buffer_request->add_data_to_end(buffer_in->get_start() + i_next_line, size_without_first_line);
     buffer_request->add_data_to_end(first_line.c_str(), first_line.size());
+    fprintf(stderr, "Size: %ld\n", buffer_request->get_data_size());
+    buffer_request->add_symbol_to_end('\n');
+    fprintf(stderr, "Size: %ld\n", buffer_request->get_data_size());
+    buffer_request->add_data_to_end(buffer_in->get_start() + i_next_line, size_without_first_line);
+    fprintf(stderr, "Size: %ld\n", buffer_request->get_data_size());
 
     buffer_request->get_end()[0] = '\0';
-    fprintf(stderr, "\n!!!!! New request: \n%s\n\n", buffer_request->get_start());
+    fprintf(stderr, "\n!!!!! New request: \n%s", buffer_request->get_start());
 
     buffer_in->do_move_start(buffer_in->get_data_size());
+    fprintf(stderr, "Done\n");
 }
 
 void push_data_to_request_from_cache(Client * client, std::pair<char*, size_t> data) {
@@ -170,10 +177,12 @@ int create_tcp_connection_to_request(Client * client, std::string host_name) {
     dest_addr.sin_port = htons(DEFAULT_PORT);
     memcpy(&dest_addr.sin_addr, host_info->h_addr, host_info->h_length);
 
+    fprintf(stderr, "Before connect\n");
     if (connect(http_socket, (struct sockaddr *)&dest_addr, sizeof(dest_addr))) {
         perror("connect");
         return RESULT_INCORRECT;
     }
+    fprintf(stderr, "After connect\n");
 
     client->set_http_socket(http_socket);
 
@@ -190,13 +199,14 @@ int handle_first_line_proxy_request(Client * client, char * p_new_line, size_t i
 
     if ("" == host_name || "" == new_first_line) {
         fprintf(stderr, "Can not correctly parse first line\n");
+
         return RESULT_INCORRECT;
     }
 
     fprintf(stderr, "Hostname: %s\n", host_name.c_str());
     fprintf(stderr, "New first line: %s\n", new_first_line.c_str());
 
-    if (cache->is_in_cache(parsed)) {
+    if (false/* && cache->is_in_cache(parsed)*/) {
         Record record = cache->get_from_cache(parsed);
         push_data_to_request_from_cache(client, std::make_pair(record.data, record.size));
 
@@ -218,6 +228,7 @@ int move_end_client_in_buffer(Client * client, ssize_t received) {
 
 void delete_finished_clients() {
     //fprintf(stderr, "\nClients size before clean: %ld\n", clients.size());
+
     std::vector<Client*> rest_clients;
 
     for (auto client : clients) {
@@ -225,17 +236,30 @@ void delete_finished_clients() {
             delete client;
         }
         else {
+            int http_socket = client->get_http_socket();
+
+            if (-1 != http_socket && client->is_closed_http_socket()) {
+                fprintf(stderr, "Close http socket\n");
+                if (close(http_socket)) {
+                    perror("close");
+                }
+                client->set_http_socket(-1);
+            }
+
             rest_clients.push_back(client);
         }
     }
 
     clients = rest_clients;
+
     //fprintf(stderr, "Clients size after clean: %ld\n", clients.size());
 }
 
 void receive_request_from_client(Client * client) {
     Buffer * buffer_in = client->get_buffer_in();
     ssize_t received = recv(client->get_my_socket(), buffer_in->get_end(), buffer_in->get_empty_space_size(), 0);
+
+    fprintf(stderr, "[%d] Received: %ld\n", client->get_my_socket(), received);
 
     switch (received) {
         case -1:
@@ -289,7 +313,7 @@ void send_answer_to_client(Client * client) {
 
         ssize_t sent = send(client->get_my_socket(), buffer_out->get_start(), buffer_out->get_data_size(), 0);
 
-        fprintf(stderr, "Sent: %ld\n", sent);
+        fprintf(stderr, "[%d] Sent: %ld\n", client->get_my_socket(), sent);
 
         switch (sent) {
             case -1:
@@ -308,8 +332,12 @@ void send_answer_to_client(Client * client) {
 }
 
 void receive_server_response(Client * client) {
+    fprintf(stderr, "Have data from server\n");
+
     Buffer * buffer_out = client->get_buffer_out();
     ssize_t received = recv(client->get_http_socket(), buffer_out->get_end(), buffer_out->get_empty_space_size(), 0);
+
+    fprintf(stderr, "[%d] Received: %ldn\n", client->get_my_socket(), received);
 
     switch (received) {
         case -1:
@@ -319,14 +347,10 @@ void receive_server_response(Client * client) {
 
         case 0:
             fprintf(stderr, "Close http connection\n");
+            fprintf(stderr, "Socket: %d\n", client->get_http_socket());
 
-            if (0 != close(client->get_http_socket())) {
-                perror("close");
-                client->set_closed_incorrect();
-                break;
-            }
+            client->set_close_http_socket();
 
-            client->set_http_socket(-1);
             break;
 
         default:
@@ -342,6 +366,8 @@ void send_request_to_server(Client * client) {
 
         ssize_t sent = send(client->get_http_socket(), buffer_request->get_start(), buffer_request->get_data_size(), 0);
 
+        fprintf(stderr, "[%d] Sent: %ld\n", client->get_my_socket(), sent);
+
         switch (sent) {
             case -1:
                 perror("Error while send(http)");
@@ -349,14 +375,7 @@ void send_request_to_server(Client * client) {
                 break;
 
             case 0:
-                if (0 != close(client->get_http_socket())) {
-                    perror("close");
-                    client->set_closed_incorrect();
-                    break;
-                }
-
-                client->set_http_socket(-1);
-
+                client->set_close_http_socket();
                 break;
 
             default:
@@ -387,7 +406,9 @@ void start_main_loop() {
 
             max_fd = std::max(max_fd, client->get_my_socket());
 
-            if (client->is_received_get_request() && -1 != client->get_http_socket()) {
+            if (client->is_received_get_request() && -1 != client->get_http_socket() &&
+                    !client->is_closed_http_socket())
+            {
                 FD_SET(client->get_http_socket(), &fds_read);
 
                 if (client->get_buffer_server_request()->is_have_data()) {
@@ -398,11 +419,24 @@ void start_main_loop() {
             }
         }
 
+        fprintf(stderr, "Before select\n");
         int activity = select(max_fd + 1, &fds_read, &fds_write, NULL, NULL);
+        fprintf(stderr, "After select %d\n", activity);
 
         if (activity <= 0) {
             perror("select");
             continue;
+        }
+
+        for (auto client : clients) {
+            int my_socket = client->get_my_socket();
+            int http_socket = client->get_http_socket();
+            fprintf(stderr, "Sockets: %d %d\n", my_socket, http_socket);
+            fprintf(stderr, "My: %d %d\n", FD_ISSET(my_socket, &fds_read), FD_ISSET(my_socket, &fds_write));
+            if (http_socket != -1) {
+                fprintf(stderr, "Closed: %d\n", client->is_closed_http_socket());
+                fprintf(stderr, "Http: %d %d\n", FD_ISSET(http_socket, &fds_read), FD_ISSET(http_socket, &fds_write));
+            }
         }
 
         if (FD_ISSET(my_server_socket, &fds_read)) {
@@ -411,38 +445,34 @@ void start_main_loop() {
         }
 
         for (auto client : clients) {
+            //fprintf(stderr, "Current sockets: %d %d\n", client->get_my_socket(), client->get_http_socket());
+
             if (FD_ISSET(client->get_my_socket(), &fds_read)) {
                 fprintf(stderr, "Have data from client\n");
                 receive_request_from_client(client);
             }
 
-            if (client->is_closed()) {
+            /*if (!client->is_received_get_request()) {
+                fprintf(stderr, "Not received\n");
                 continue;
-            }
+            }*/
 
             if (!client->is_data_cached() &&
-                client->is_received_get_request() &&
-                -1 != client->get_http_socket() &&
+                !client->is_closed_http_socket() &&
                 FD_ISSET(client->get_http_socket(), &fds_write))
             {
                 send_request_to_server(client);
             }
-        }
 
-        delete_finished_clients();
-
-        for (auto client : clients) {
-            if (!client->is_received_get_request()) {
-                continue;
-            }
-
-            if (!client->is_data_cached() && FD_ISSET(client->get_http_socket(), &fds_read)) {
+            if (!client->is_data_cached() &&
+                    !client->is_closed_http_socket() &&
+                    FD_ISSET(client->get_http_socket(), &fds_read))
+            {
+                fprintf(stderr, "%d\n", FD_ISSET(client->get_http_socket(), &fds_read));
                 fprintf(stderr, "Have data (http response)\n");
+                fprintf(stderr, "Socket: %d\n", client->get_http_socket());
                 receive_server_response(client);
-            }
-
-            if (client->is_closed()) {
-                continue;
+                fprintf(stderr, "Done\n");
             }
 
             if (FD_ISSET(client->get_my_socket(), &fds_write)) {
@@ -450,11 +480,38 @@ void start_main_loop() {
             }
         }
 
+        for (auto client : clients) {
+            if (client->is_closed_http_socket() && !client->get_buffer_out()->is_have_data()) {
+                client->set_closed_correct();
+            }
+        }
+
         delete_finished_clients();
     }
 }
 
+void signal_handle(int sig) {
+    perror("perror");
+    fprintf(stderr, "Exit with code %d\n", sig);
+
+    delete cache;
+
+    for (auto client : clients) {
+        delete client;
+    }
+
+    fprintf(stderr, "Close my server socket\n");
+    close(my_server_socket);
+
+    exit(EXIT_SUCCESS);
+}
+
 int main(int argc, char *argv[]) {
+    signal(SIGINT, signal_handle);
+    signal(SIGKILL, signal_handle);
+    signal(SIGTERM, signal_handle);
+    signal(SIGSEGV, signal_handle);
+
     // todo GET_OPT!!!
 
     if (2 != argc) {

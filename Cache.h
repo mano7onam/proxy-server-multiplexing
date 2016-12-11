@@ -28,6 +28,7 @@ public:
 
     void delete_from_cache(std::pair<std::string, std::string> key);
 
+    ~Cache();
 };
 
 

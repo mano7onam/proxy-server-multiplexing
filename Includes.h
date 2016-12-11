@@ -13,6 +13,7 @@
 #include <poll.h> //poll
 #include <unistd.h> //read, write, close
 #include <arpa/inet.h> //htonl, htons
+#include <signal.h>
 #include <vector>
 #include <algorithm>
 #include <string>
