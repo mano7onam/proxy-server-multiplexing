@@ -7,6 +7,7 @@
 
 #include "Cache.h"
 #include "Buffer.h"
+#include "Parser.h"
 
 class Client {
     int my_socket;
@@ -24,6 +25,7 @@ class Client {
     bool flag_closed;
     bool flag_closed_correct;
     bool flag_closed_http_socket;
+    bool flag_process_http_connecting;
 
     Cache * cache;
 
@@ -90,6 +92,18 @@ public:
         return flag_received_get_request;
     }
 
+    void set_process_http_connecting() {
+        flag_process_http_connecting = true;
+    }
+
+    void set_http_connected() {
+        flag_process_http_connecting = false;
+    }
+
+    bool is_process_http_connecting() {
+        return flag_process_http_connecting;
+    }
+
     Buffer * get_buffer_server_request() {
         return buffer_server_request;
     }
@@ -101,6 +115,8 @@ public:
     Buffer * get_buffer_out() {
         return buffer_out;
     }
+
+
 
     ~Client();
 

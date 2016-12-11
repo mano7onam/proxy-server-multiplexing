@@ -14,6 +14,8 @@
 #include <unistd.h> //read, write, close
 #include <arpa/inet.h> //htonl, htons
 #include <signal.h>
+#include <fcntl.h>
+
 #include <vector>
 #include <algorithm>
 #include <string>

@@ -1,5 +1,4 @@
 #include "Includes.h"
-
 #include "Client.h"
 
 std::ofstream out_to_file("output.txt");
@@ -52,104 +51,6 @@ void accept_incoming_connection() {
     clients.push_back(new_client);
 }
 
-std::pair<std::string, std::string> parse_hostname_and_path(char * uri) {
-    char host_name[LITTLE_STRING_SIZE];
-    char path[LITTLE_STRING_SIZE];
-
-    char * protocolEnd = strstr(uri, "://");
-    if (NULL == protocolEnd) {
-        perror("Wrong protocol");
-        return std::make_pair("", "");
-    }
-
-    char * host_end = strchr(protocolEnd + 3, '/');
-    size_t host_length = 0;
-    if (NULL == host_end) {
-        host_length = strlen(protocolEnd + 3);
-        path[0] = '/';
-        path[1] = '\0';
-    }
-    else {
-        host_length = host_end - (protocolEnd + 3);
-        size_t path_size = strlen(uri) - (host_end - uri);
-        strncpy(path, host_end, path_size);
-        path[path_size] = '\0';
-    }
-
-    strncpy(host_name, protocolEnd + 3, host_length);
-    host_name[host_length] = '\0';
-
-    return std::make_pair(std::string(host_name), std::string(path));
-}
-
-// return host name and first line to server GET request
-// "" - when any error in parsing
-std::pair<std::string, std::string> get_new_first_line_and_hostname(Client * client, char * p_new_line) {
-    Buffer * client_buffer_in = client->get_buffer_in();
-
-    if (client_buffer_in->get_data_size() < 3 ||
-        client_buffer_in->get_start()[0] != 'G' ||
-        client_buffer_in->get_start()[1] != 'E' ||
-        client_buffer_in->get_start()[2] != 'T')
-    {
-        fprintf(stderr, "Not GET request\n");
-        return std::make_pair("", "");
-    }
-
-    char first_line[LITTLE_STRING_SIZE];
-
-    size_t first_line_length = p_new_line - client_buffer_in->get_start();
-    strncpy(first_line, client_buffer_in->get_start(), first_line_length);
-
-    first_line[first_line_length] = '\0';
-    fprintf(stderr, "First line from client: %s\n", first_line);
-
-    char * method = strtok(first_line, " ");
-    char * uri = strtok(NULL, " ");
-    char * version = strtok(NULL, "\n\0");
-
-    fprintf(stderr, "method: %s\n", method);
-    fprintf(stderr, "uri: %s\n", uri);
-    fprintf(stderr, "version: %s\n", version);
-
-    std::pair<std::string, std::string> parsed = parse_hostname_and_path(uri);
-
-    std::string host_name = parsed.first;
-    std::string path = parsed.second;
-
-    if ("" == host_name || "" == path) {
-        fprintf(stderr, "Hostname or path haven't been parsed\n");
-        return std::make_pair("", "");
-    }
-
-    fprintf(stderr, "HostName: \'%s\'\n", host_name.c_str());
-    fprintf(stderr, "Path: %s\n", path.c_str());
-
-    std::string http10str = "HTTP/1.0";
-    std::string new_first_line = std::string(method) + " " + path + " " + http10str;
-
-    return std::make_pair(host_name, new_first_line);
-}
-
-void push_first_data_request(Client * client, std::string first_line, Buffer * buffer_in, size_t i_next_line) {
-    size_t size_without_first_line = (buffer_in->get_end() - buffer_in->get_start()) - i_next_line;
-
-    Buffer * buffer_request = client->get_buffer_server_request();
-
-    buffer_request->add_data_to_end(first_line.c_str(), first_line.size());
-    fprintf(stderr, "Size: %ld\n", buffer_request->get_data_size());
-    buffer_request->add_symbol_to_end('\n');
-    fprintf(stderr, "Size: %ld\n", buffer_request->get_data_size());
-    buffer_request->add_data_to_end(buffer_in->get_start() + i_next_line, size_without_first_line);
-    fprintf(stderr, "Size: %ld\n", buffer_request->get_data_size());
-
-    buffer_request->get_end()[0] = '\0';
-    fprintf(stderr, "\n!!!!! New request: \n%s", buffer_request->get_start());
-
-    buffer_in->do_move_start(buffer_in->get_data_size());
-    fprintf(stderr, "Done\n");
-}
-
 void push_data_to_request_from_cache(Client * client, std::pair<char*, size_t> data) {
     client->set_data_cached();
 
@@ -177,6 +78,9 @@ int create_tcp_connection_to_request(Client * client, std::string host_name) {
     dest_addr.sin_port = htons(DEFAULT_PORT);
     memcpy(&dest_addr.sin_addr, host_info->h_addr, host_info->h_length);
 
+    /*int flags = fcntl(http_socket, F_GETFL, 0);
+    fcntl(http_socket, F_SETFL, flags | O_NONBLOCK);*/
+
     fprintf(stderr, "Before connect\n");
     if (connect(http_socket, (struct sockaddr *)&dest_addr, sizeof(dest_addr))) {
         perror("connect");
@@ -192,7 +96,7 @@ int create_tcp_connection_to_request(Client * client, std::string host_name) {
 int handle_first_line_proxy_request(Client * client, char * p_new_line, size_t i_next_line) {
     Buffer * buffer_in = client->get_buffer_in();
 
-    std::pair<std::string, std::string> parsed = get_new_first_line_and_hostname(client, p_new_line);
+    std::pair<std::string, std::string> parsed = Parser::get_new_first_line_and_hostname(buffer_in, p_new_line);
 
     std::string host_name = parsed.first;
     std::string new_first_line = parsed.second;
@@ -213,7 +117,7 @@ int handle_first_line_proxy_request(Client * client, char * p_new_line, size_t i
         return RESULT_CORRECT;
     }
     else {
-        push_first_data_request(client, new_first_line, buffer_in, i_next_line);
+        Parser::push_first_data_request(client->get_buffer_server_request(), buffer_in, new_first_line, i_next_line);
         int result_connection = create_tcp_connection_to_request(client, host_name);
 
         return result_connection;
@@ -406,9 +310,7 @@ void start_main_loop() {
 
             max_fd = std::max(max_fd, client->get_my_socket());
 
-            if (client->is_received_get_request() && -1 != client->get_http_socket() &&
-                    !client->is_closed_http_socket())
-            {
+            if (client->is_received_get_request() && -1 != client->get_http_socket() && !client->is_closed_http_socket()) {
                 FD_SET(client->get_http_socket(), &fds_read);
 
                 if (client->get_buffer_server_request()->is_have_data()) {
@@ -451,11 +353,6 @@ void start_main_loop() {
                 fprintf(stderr, "Have data from client\n");
                 receive_request_from_client(client);
             }
-
-            /*if (!client->is_received_get_request()) {
-                fprintf(stderr, "Not received\n");
-                continue;
-            }*/
 
             if (!client->is_data_cached() &&
                 !client->is_closed_http_socket() &&

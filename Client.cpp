@@ -20,6 +20,8 @@ Client::Client(int my_socket, Cache * cache) {
     flag_closed = false;
     flag_closed_http_socket = false;
 
+    flag_process_http_connecting = false;
+
     flag_data_cached = false;
 
     this->cache = cache;
