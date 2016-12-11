@@ -116,7 +116,17 @@ public:
         return buffer_out;
     }
 
+    int create_tcp_connection_to_request(std::string host_name);
 
+    int handle_first_line_proxy_request(char * p_new_line, size_t i_next_line);
+
+    void receive_request_from_client();
+
+    void send_answer_to_client();
+
+    void receive_server_response();
+
+    void send_request_to_server();
 
     ~Client();
 
