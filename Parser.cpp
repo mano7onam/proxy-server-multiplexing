@@ -35,13 +35,14 @@ std::pair<std::string, std::string> Parser::parse_hostname_and_path(char * uri) 
 }
 
 std::pair<std::string, std::string> Parser::get_new_first_line_and_hostname(Buffer * buffer_in, char *p_new_line) {
-    if (buffer_in->get_data_size() < 3 ||
-            buffer_in->get_start()[0] != 'G' ||
-            buffer_in->get_start()[1] != 'E' ||
-            buffer_in->get_start()[2] != 'T')
-    {
+    if (NULL == strstr(buffer_in->get_start(), "GET")) {
         fprintf(stderr, "Not GET request\n");
-        return std::make_pair("", "");
+        return std::make_pair("Bad request", "");
+    }
+
+    if (NULL == strstr(buffer_in->get_start(), "HTTP/1.0")) {
+        fprintf(stderr, "Not HTTP/1.0 request\n");
+        return std::make_pair("Bad request", "");
     }
 
     char first_line[LITTLE_STRING_SIZE];
@@ -49,8 +50,8 @@ std::pair<std::string, std::string> Parser::get_new_first_line_and_hostname(Buff
     size_t first_line_length = p_new_line - buffer_in->get_start();
     strncpy(first_line, buffer_in->get_start(), first_line_length);
 
-    first_line[first_line_length] = '\0';
-    fprintf(stderr, "First line from client: %s\n", first_line);
+    fprintf(stderr, "First line from client:\n");
+    print_buffer_data(first_line, first_line_length);
 
     char * method = strtok(first_line, " ");
     char * uri = strtok(NULL, " ");
@@ -85,15 +86,19 @@ void Parser::push_first_data_request(Buffer *buffer_request, Buffer *buffer_in, 
     size_t size_without_first_line = (buffer_in->get_end() - buffer_in->get_start()) - i_next_line;
 
     buffer_request->add_data_to_end(first_line.c_str(), first_line.size());
-    fprintf(stderr, "Size: %ld\n", buffer_request->get_data_size());
     buffer_request->add_symbol_to_end('\n');
-    fprintf(stderr, "Size: %ld\n", buffer_request->get_data_size());
     buffer_request->add_data_to_end(buffer_in->get_start() + i_next_line, size_without_first_line);
-    fprintf(stderr, "Size: %ld\n", buffer_request->get_data_size());
 
-    buffer_request->get_end()[0] = '\0';
-    fprintf(stderr, "\n!!!!! New request: \n%s", buffer_request->get_start());
+    fprintf(stderr, "New HTTP request:\n");
+    print_buffer_data(buffer_request->get_start(), buffer_request->get_data_size());
 
     buffer_in->do_move_start(buffer_in->get_data_size());
-    fprintf(stderr, "Done\n");
+}
+
+void Parser::print_buffer_data(char * data, size_t size) {
+    char * to_print = (char*) malloc(size + 1);
+    strncpy(to_print, data, size);
+    to_print[size] = '\0';
+    fprintf(stderr, "%s\n", to_print);
+    free(to_print);
 }

@@ -17,6 +17,8 @@ public:
 
     static void push_first_data_request(Buffer * buffer_request, Buffer * buffer_in, std::string first_line,
                                         size_t i_next_line);
+
+    static void print_buffer_data(char * data, size_t size);
 };
 
 

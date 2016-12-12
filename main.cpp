@@ -52,8 +52,6 @@ void accept_incoming_connection() {
 }
 
 void delete_finished_clients() {
-    //fprintf(stderr, "\nClients size before clean: %ld\n", clients.size());
-
     std::vector<Client*> rest_clients;
 
     for (auto client : clients) {
@@ -76,8 +74,6 @@ void delete_finished_clients() {
     }
 
     clients = rest_clients;
-
-    //fprintf(stderr, "Clients size after clean: %ld\n", clients.size());
 }
 
 void start_main_loop() {
@@ -113,9 +109,7 @@ void start_main_loop() {
             }
         }
 
-        fprintf(stderr, "Before select\n");
         int activity = select(max_fd + 1, &fds_read, &fds_write, NULL, NULL);
-        fprintf(stderr, "After select %d\n", activity);
 
         if (activity <= 0) {
             perror("select");
@@ -123,10 +117,8 @@ void start_main_loop() {
         }
 
         for (auto client : clients) {
-            int my_socket = client->get_my_socket();
             int http_socket = client->get_http_socket();
-            //fprintf(stderr, "Sockets: %d %d\n", my_socket, http_socket);
-            //fprintf(stderr, "My: %d %d\n", FD_ISSET(my_socket, &fds_read), FD_ISSET(my_socket, &fds_write));
+
             if (http_socket != -1) {
                 fprintf(stderr, "Closed: %d\n", client->is_closed_http_socket());
                 fprintf(stderr, "Http: %d %d\n", FD_ISSET(http_socket, &fds_read), FD_ISSET(http_socket, &fds_write));
@@ -139,38 +131,24 @@ void start_main_loop() {
         }
 
         for (auto client : clients) {
-            //fprintf(stderr, "Current sockets: %d %d\n", client->get_my_socket(), client->get_http_socket());
-
             if (FD_ISSET(client->get_my_socket(), &fds_read)) {
                 fprintf(stderr, "Have data from client\n");
-                //receive_request_from_client(client);
                 client->receive_request_from_client();
             }
 
-            if (!client->is_data_cached() &&
-                !client->is_closed_http_socket() &&
+            if (!client->is_data_cached() && !client->is_closed_http_socket() &&
                 FD_ISSET(client->get_http_socket(), &fds_write))
             {
-                //send_request_to_server(client);
                 client->send_request_to_server();
             }
 
-            if (!client->is_data_cached() &&
-                    !client->is_closed_http_socket() &&
-                    FD_ISSET(client->get_http_socket(), &fds_read))
+            if (!client->is_data_cached() && !client->is_closed_http_socket() &&
+                FD_ISSET(client->get_http_socket(), &fds_read))
             {
-                fprintf(stderr, "%d\n", FD_ISSET(client->get_http_socket(), &fds_read));
-                fprintf(stderr, "Have data (http response)\n");
-                fprintf(stderr, "Socket: %d\n", client->get_http_socket());
-
-                //receive_server_response(client);
                 client->receive_server_response();
-
-                fprintf(stderr, "Done\n");
             }
 
             if (FD_ISSET(client->get_my_socket(), &fds_write)) {
-                //send_answer_to_client(client);
                 client->send_answer_to_client();
             }
         }
@@ -225,6 +203,9 @@ int main(int argc, char *argv[]) {
     init_my_server_socket(server_port);
 
     cache = new Cache();
+
+    char bad_request[100] = "Bad request\n\0";
+    cache->push_to_cache(std::make_pair("Bad request", ""), bad_request, strlen(bad_request));
 
     start_main_loop();
 

@@ -62,23 +62,22 @@ int Client::create_tcp_connection_to_request(std::string host_name) {
     http_socket_flags = fcntl(http_socket, F_GETFL, 0);
     fcntl(http_socket, F_SETFL, http_socket_flags | O_NONBLOCK);
 
-    fprintf(stderr, "Before connect\n");
+    fprintf(stderr, "Connect to http server\n");
 
     if (connect(http_socket, (struct sockaddr *)&dest_addr, sizeof(dest_addr))) {
         if (errno == EINPROGRESS) {
             fprintf(stderr, "Connect in progress\n");
             flag_process_http_connecting = true;
-
             return RESULT_CORRECT;
         }
         else {
             perror("connect");
-
             return RESULT_INCORRECT;
         }
     }
 
     flag_process_http_connecting = false;
+
     fprintf(stderr, "Connection established\n");
 
     return RESULT_CORRECT;
@@ -86,7 +85,9 @@ int Client::create_tcp_connection_to_request(std::string host_name) {
 
 void Client::push_data_to_request_from_cache(std::pair<char *, size_t> data) {
     fprintf(stderr, "Put data from cache\n");
+
     set_data_cached();
+
     buffer_out->add_data_to_end(data.first, data.second);
 }
 
@@ -96,9 +97,8 @@ int Client::handle_first_line_proxy_request(char *p_new_line, size_t i_next_line
     std::string host_name = parsed.first;
     std::string new_first_line = parsed.second;
 
-    if ("" == host_name || "" == new_first_line) {
+    if ("" == host_name && "" == new_first_line) {
         fprintf(stderr, "Can not correctly parse first line\n");
-
         return RESULT_INCORRECT;
     }
 
@@ -124,7 +124,7 @@ int Client::handle_first_line_proxy_request(char *p_new_line, size_t i_next_line
 void Client::receive_request_from_client() {
     ssize_t received = recv(my_socket, buffer_in->get_end(), buffer_in->get_empty_space_size(), 0);
 
-    fprintf(stderr, "[%d] Received: %ld\n", my_socket, received);
+    fprintf(stderr, "My socket: [%d], Received: %ld\n", my_socket, received);
 
     switch (received) {
         case -1:
@@ -196,7 +196,7 @@ void Client::receive_server_response() {
     fprintf(stderr, "Have data from server\n");
 
     if (flag_process_http_connecting) {
-        fprintf(stderr, "Connection established\n");
+        fprintf(stderr, "Http connection established\n");
 
         fcntl(http_socket, F_SETFL, http_socket_flags);
         flag_process_http_connecting = false;
@@ -206,7 +206,7 @@ void Client::receive_server_response() {
 
     ssize_t received = recv(http_socket, buffer_out->get_end(), buffer_out->get_empty_space_size(), 0);
 
-    fprintf(stderr, "[%d] Received: %ldn\n", my_socket, received);
+    fprintf(stderr, "My socket: [%d], Received: %ldn\n", my_socket, received);
 
     switch (received) {
         case -1:
@@ -215,11 +215,8 @@ void Client::receive_server_response() {
             break;
 
         case 0:
-            fprintf(stderr, "Close http connection\n");
-            fprintf(stderr, "Socket: %d\n", http_socket);
-
+            fprintf(stderr, "Set closed http connection\n");
             set_close_http_socket();
-
             break;
 
         default:
@@ -229,11 +226,11 @@ void Client::receive_server_response() {
 
 void Client::send_request_to_server() {
     if (!is_data_cached() && buffer_server_request->is_have_data()) {
-        fprintf(stderr, "\nHave data to send to http server\n");
+        fprintf(stderr, "Send data to server\n");
 
         ssize_t sent = send(http_socket, buffer_server_request->get_start(), buffer_server_request->get_data_size(), 0);
 
-        fprintf(stderr, "[%d] Sent: %ld\n", my_socket, sent);
+        fprintf(stderr, "My socket: [%d], Sent: %ld\n", my_socket, sent);
 
         switch (sent) {
             case -1:
@@ -252,7 +249,7 @@ void Client::send_request_to_server() {
 }
 
 Client::~Client() {
-    fprintf(stderr, "Destructor client!!!!\n");
+    fprintf(stderr, "Destructor client\n");
 
     if (-1 != my_socket && flag_correct_my_socket) {
         close(my_socket);
@@ -262,7 +259,7 @@ Client::~Client() {
         close(http_socket);
     }
 
-    if (flag_closed_correct) {
+    if (flag_closed_correct && !is_data_cached()) {
         fprintf(stderr, "Add result to cache\n");
         add_result_to_cache();
     }
@@ -270,4 +267,6 @@ Client::~Client() {
     delete buffer_in;
     delete buffer_server_request;
     delete buffer_out;
+
+    fprintf(stderr, "Destructor client done\n");
 }

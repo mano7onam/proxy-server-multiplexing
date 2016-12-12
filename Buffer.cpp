@@ -17,6 +17,8 @@ Buffer::Buffer(size_t size) {
         is_correct = false;
         exit(EXIT_FAILURE);
     }
+
+    is_correct = true;
 }
 
 int Buffer::do_resize(size_t new_size) {
