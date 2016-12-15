@@ -83,7 +83,7 @@ int Client::handle_first_line_proxy_request(char *p_new_line, size_t i_next_line
     std::string host_name = parsed.first;
     std::string new_first_line = parsed.second;
 
-    if ("" == host_name && "" == new_first_line) {
+    if ("" == host_name || "" == new_first_line) {
         fprintf(stderr, "Can not correctly parse first line\n");
         return RESULT_INCORRECT;
     }
@@ -288,16 +288,21 @@ Client::~Client() {
     }
 
     if (!flag_take_data_from_cache) {
-        if (flag_closed_correct) {
-            buffer_out->set_finished_correct();
+        if (NULL == buffer_out || !flag_closed_correct) {
+            cache->delete_from_cache(cache_key);
         }
         else {
-            buffer_out->set_finished_incorrect();
+            buffer_out->set_finished_correct();
         }
     }
 
-    delete buffer_in;
-    delete buffer_server_request;
+    if (NULL != buffer_in) {
+        delete buffer_in;
+    }
+
+    if (NULL != buffer_server_request) {
+        delete buffer_server_request;
+    }
 
     fprintf(stderr, "Destructor client done\n");
 }

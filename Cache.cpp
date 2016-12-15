@@ -33,7 +33,10 @@ void Cache::delete_from_cache(std::pair<std::string, std::string> key) {
         return;
     }
 
-    delete cache[key];
+    if (cache[key] != NULL) {
+        delete cache[key];
+    }
+
     cache.erase(key);
 }
 
