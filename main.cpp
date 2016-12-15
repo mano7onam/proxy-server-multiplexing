@@ -92,7 +92,7 @@ void start_main_loop() {
         for (auto client : clients) {
             FD_SET(client->get_my_socket(), &fds_read);
 
-            if (client->get_buffer_out()->is_have_data()) {
+            if (client->is_have_data_for_client()) {
                 FD_SET(client->get_my_socket(), &fds_write);
             }
 
@@ -101,7 +101,7 @@ void start_main_loop() {
             if (client->is_received_get_request() && -1 != client->get_http_socket() && !client->is_closed_http_socket()) {
                 FD_SET(client->get_http_socket(), &fds_read);
 
-                if (client->get_buffer_server_request()->is_have_data()) {
+                if (client->is_have_data_for_server()) {
                     FD_SET(client->get_http_socket(), &fds_write);
                 }
 
@@ -136,28 +136,22 @@ void start_main_loop() {
                 client->receive_request_from_client();
             }
 
-            if (!client->is_data_cached() && !client->is_closed_http_socket() &&
-                FD_ISSET(client->get_http_socket(), &fds_write))
-            {
+            if (client->is_have_data_for_server() && FD_ISSET(client->get_http_socket(), &fds_write)) {
                 client->send_request_to_server();
             }
 
-            if (!client->is_data_cached() && !client->is_closed_http_socket() &&
-                FD_ISSET(client->get_http_socket(), &fds_read))
-            {
+            if (client->can_recv_from_server() && FD_ISSET(client->get_http_socket(), &fds_read)) {
                 client->receive_server_response();
             }
 
-            if (FD_ISSET(client->get_my_socket(), &fds_write)) {
+            if (client->is_have_data_for_client() && FD_ISSET(client->get_my_socket(), &fds_write)) {
                 client->send_answer_to_client();
             }
         }
 
         for (auto client : clients) {
-            if (client->is_closed_http_socket() && !client->get_buffer_out()->is_have_data()) {
-                client->set_closed_correct();
-            }
-            if (client->is_data_cached() && !client->get_buffer_out()->is_have_data()) {
+            if (client->can_be_closed()) {
+                fprintf(stderr, "Can to close client\n");
                 client->set_closed_correct();
             }
         }
@@ -205,7 +199,6 @@ int main(int argc, char *argv[]) {
     cache = new Cache();
 
     char bad_request[100] = "Bad request\n\0";
-    cache->push_to_cache(std::make_pair("Bad request", ""), bad_request, strlen(bad_request));
 
     start_main_loop();
 

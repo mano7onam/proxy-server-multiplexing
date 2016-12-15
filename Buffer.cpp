@@ -7,18 +7,39 @@
 Buffer::Buffer(size_t size) {
     this->size = size;
 
-    start = 0;
     end = 0;
 
     buf = (char*) malloc(size);
 
     if (NULL == buf) {
         perror("malloc");
-        is_correct = false;
+        flag_correct_buffer = false;
         exit(EXIT_FAILURE);
     }
 
-    is_correct = true;
+    flag_correct_buffer = true;
+
+    flag_finished = false;
+    flag_finished_correct = true;
+}
+
+Buffer::Buffer() {
+    size = DEFAULT_BUFFER_SIZE;
+
+    end = 0;
+
+    buf = (char*) malloc(size);
+
+    if (NULL == buf) {
+        perror("malloc");
+        flag_correct_buffer = false;
+        exit(EXIT_FAILURE);
+    }
+
+    flag_correct_buffer = true;
+
+    flag_finished = false;
+    flag_finished_correct = true;
 }
 
 int Buffer::do_resize(size_t new_size) {
@@ -49,10 +70,6 @@ int Buffer::do_move_end(ssize_t received) {
     return RESULT_CORRECT;
 }
 
-void Buffer::do_move_start(ssize_t sent) {
-    start += sent;
-}
-
 void Buffer::add_data_to_end(const char * from, size_t size_data) {
     while (end + size_data > size) {
         do_resize(size * 2);
@@ -74,7 +91,7 @@ Buffer::~Buffer() {
     fprintf(stderr, "Destructor buffer\n");
     fprintf(stderr, "Size: %ld\n", size);
 
-    if (is_correct) {
+    if (flag_correct_buffer) {
         free(buf);
         perror("free");
     }

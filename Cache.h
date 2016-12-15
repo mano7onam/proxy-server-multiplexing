@@ -6,15 +6,10 @@
 #define PORTFORWARDERREDEAWROFTROP_CACHE_H
 
 #include "Includes.h"
-
-struct Record {
-    char * data;
-    size_t size;
-    long long last_time_use;
-};
+#include "Buffer.h"
 
 class Cache {
-    std::map<std::pair<std::string, std::string>, Record> cache;
+    std::map<std::pair<std::string, std::string>, Buffer*> cache;
 
 public:
 
@@ -22,9 +17,9 @@ public:
 
     bool is_in_cache(std::pair<std::string, std::string> key);
 
-    Record get_from_cache(std::pair<std::string, std::string> key);
+    Buffer * get_from_cache(std::pair<std::string, std::string> key);
 
-    int push_to_cache(std::pair<std::string, std::string> key, char * value, size_t size_value);
+    int push_to_cache(std::pair<std::string, std::string> key, Buffer * data);
 
     void delete_from_cache(std::pair<std::string, std::string> key);
 

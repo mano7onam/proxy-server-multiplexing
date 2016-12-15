@@ -35,20 +35,22 @@ std::pair<std::string, std::string> Parser::parse_hostname_and_path(char * uri) 
 }
 
 std::pair<std::string, std::string> Parser::get_new_first_line_and_hostname(Buffer * buffer_in, char *p_new_line) {
-    if (NULL == strstr(buffer_in->get_start(), "GET")) {
+    char * buffer_in_buf = buffer_in->get_buf_offs(0U);
+
+    if (NULL == strstr(buffer_in_buf, "GET")) {
         fprintf(stderr, "Not GET request\n");
         return std::make_pair("Bad request", "");
     }
 
-    if (NULL == strstr(buffer_in->get_start(), "HTTP/1.0")) {
+    if (NULL == strstr(buffer_in_buf, "HTTP/1.0")) {
         fprintf(stderr, "Not HTTP/1.0 request\n");
         return std::make_pair("Bad request", "");
     }
 
     char first_line[LITTLE_STRING_SIZE];
 
-    size_t first_line_length = p_new_line - buffer_in->get_start();
-    strncpy(first_line, buffer_in->get_start(), first_line_length);
+    size_t first_line_length = p_new_line - buffer_in_buf;
+    strncpy(first_line, buffer_in_buf, first_line_length);
 
     fprintf(stderr, "First line from client:\n");
     print_buffer_data(first_line, first_line_length);
@@ -83,16 +85,14 @@ std::pair<std::string, std::string> Parser::get_new_first_line_and_hostname(Buff
 void Parser::push_first_data_request(Buffer *buffer_request, Buffer *buffer_in, std::string first_line,
                                      size_t i_next_line)
 {
-    size_t size_without_first_line = (buffer_in->get_end() - buffer_in->get_start()) - i_next_line;
+    size_t size_without_first_line = (buffer_in->get_end() - buffer_in->get_buf_offs(0U)) - i_next_line;
 
     buffer_request->add_data_to_end(first_line.c_str(), first_line.size());
     buffer_request->add_symbol_to_end('\n');
-    buffer_request->add_data_to_end(buffer_in->get_start() + i_next_line, size_without_first_line);
+    buffer_request->add_data_to_end(buffer_in->get_buf_offs(0U) + i_next_line, size_without_first_line);
 
     fprintf(stderr, "New HTTP request:\n");
-    print_buffer_data(buffer_request->get_start(), buffer_request->get_data_size());
-
-    buffer_in->do_move_start(buffer_in->get_data_size());
+    print_buffer_data(buffer_request->get_buf_offs(0U), buffer_request->get_data_size(0U));
 }
 
 void Parser::print_buffer_data(char * data, size_t size) {

@@ -10,56 +10,42 @@
 class Buffer {
     char * buf;
 
-    size_t start;
     size_t end;
     size_t size;
 
-    bool is_correct;
+    bool flag_correct_buffer;
+
+    bool flag_finished;
+    bool flag_finished_correct;
 
 public:
     Buffer(size_t size);
 
-    bool is_have_data() {
-        return end - start > 0U;
-    }
+    Buffer();
 
-    size_t get_data_size() {
-        return end - start;
-    }
+    bool is_have_data(size_t offs) { return end > offs; }
 
-    size_t get_empty_space_size() {
-        return size - end;
-    }
+    bool is_finished() { return flag_finished;}
 
-    size_t get_capacity() {
-        return size;
-    }
+    bool is_finished_correct() { return flag_finished && flag_finished_correct; }
 
-    char * get_buf() {
-        return buf;
-    }
+    void set_finished_correct() { flag_finished = true;  flag_finished_correct = true; }
 
-    size_t get_i_end() {
-        return end;
-    }
+    void set_finished_incorrect() { flag_finished = true; flag_finished_correct = false;}
 
-    size_t get_i_start() {
-        return start;
-    }
+    size_t get_data_size(size_t offs) { return end - offs; }
 
-    char * get_start() {
-        return buf + start;
-    }
+    size_t get_empty_space_size() { return size - end; }
 
-    char * get_end() {
-        return buf + end;
-    }
+    size_t get_capacity() { return size; }
+
+    char * get_buf_offs(size_t offs) { return buf + offs; }
+
+    char * get_end() { return buf + end; }
 
     int do_resize(size_t new_size);
 
     int do_move_end(ssize_t received);
-
-    void do_move_start(ssize_t sent);
 
     void add_data_to_end(const char * from, size_t size_data);
 

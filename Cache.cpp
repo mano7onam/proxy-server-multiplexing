@@ -14,17 +14,14 @@ bool Cache::is_in_cache(std::pair<std::string, std::string> key) {
     fprintf(stderr, "Check in cache: %s %s\n", key.first.c_str(), key.second.c_str());
 
     bool result = (bool) cache.count(key);
-
     return result;
 }
 
-Record Cache::get_from_cache(std::pair<std::string, std::string> key) {
+Buffer * Cache::get_from_cache(std::pair<std::string, std::string> key) {
     fprintf(stderr, "Get from cache: %s %s\n", key.first.c_str(), key.second.c_str());
 
     if (!cache.count(key)) {
-        Record record;
-        record.data = NULL;
-        return record;
+        return NULL;
     }
     else {
         return cache[key];
@@ -36,25 +33,22 @@ void Cache::delete_from_cache(std::pair<std::string, std::string> key) {
         return;
     }
 
-    free(cache[key].data);
+    delete cache[key];
     cache.erase(key);
 }
 
-int Cache::push_to_cache(std::pair<std::string, std::string> key, char *value, size_t size_value) {
+int Cache::push_to_cache(std::pair<std::string, std::string> key, Buffer * data) {
     fprintf(stderr, "Push to cache: %s %s\n", key.first.c_str(), key.second.c_str());
 
     if (cache.count(key)) {
-        free(cache[key].data);
+        delete cache[key];
     }
 
-    cache[key].data = (char*) malloc(size_value);
-    memcpy(cache[key].data, value, size_value);
-
-    cache[key].size = size_value;
+    cache[key] = data;
 }
 
 Cache::~Cache() {
     for (auto elem : cache) {
-        free(elem.second.data);
+        delete elem.second;
     }
 }
