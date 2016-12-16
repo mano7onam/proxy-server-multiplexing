@@ -116,22 +116,13 @@ void start_main_loop() {
             continue;
         }
 
-        for (auto client : clients) {
-            int http_socket = client->get_http_socket();
-
-            if (http_socket != -1) {
-                fprintf(stderr, "Closed: %d\n", client->is_closed_http_socket());
-                fprintf(stderr, "Http: %d %d\n", FD_ISSET(http_socket, &fds_read), FD_ISSET(http_socket, &fds_write));
-            }
-        }
-
         if (FD_ISSET(my_server_socket, &fds_read)) {
             fprintf(stderr, "Have incoming client connection\n");
             accept_incoming_connection();
         }
 
         for (auto client : clients) {
-            if (FD_ISSET(client->get_my_socket(), &fds_read)) {
+            if (client->can_recv_from_client() && FD_ISSET(client->get_my_socket(), &fds_read)) {
                 fprintf(stderr, "Have data from client\n");
                 client->receive_request_from_client();
             }

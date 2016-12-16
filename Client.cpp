@@ -25,6 +25,7 @@ Client::Client(int my_socket, Cache * cache) {
 
     flag_closed = false;
     flag_closed_http_socket = false;
+    flag_closed_my_socket = false;
 
     flag_process_http_connecting = false;
 
@@ -128,7 +129,7 @@ void Client::receive_request_from_client() {
 
         case 0:
             fprintf(stderr, "Close client\n");
-            set_closed_correct();
+            set_close_my_socket();
             break;
 
         default:
@@ -175,11 +176,11 @@ void Client::send_answer_to_client() {
     switch (sent) {
         case -1:
             perror("Error while send to client");
-            set_closed_incorrect();
+            set_close_my_socket();
             break;
 
         case 0:
-            set_closed_correct();
+            set_close_my_socket();
             break;
 
         default:
@@ -243,12 +244,16 @@ void Client::send_request_to_server() {
     }
 }
 
+bool Client::can_recv_from_client() {
+    return !is_closed_my_socket();
+}
+
 bool Client::can_recv_from_server() {
     return !flag_take_data_from_cache && !is_closed_http_socket();
 }
 
 bool Client::is_have_data_for_client() {
-    if (NULL == buffer_out) {
+    if (NULL == buffer_out || is_closed_my_socket()) {
         return false;
     }
 
@@ -264,6 +269,10 @@ bool Client::is_have_data_for_server() {
 }
 
 bool Client::can_be_closed() {
+    if (is_closed_my_socket() && (is_closed_http_socket() || !is_received_get_request())) {
+        return true;
+    }
+
     if (NULL == buffer_out) {
         return false;
     }

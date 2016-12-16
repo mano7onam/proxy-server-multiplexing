@@ -30,6 +30,7 @@ class Client {
     bool flag_closed;
     bool flag_closed_correct;
     bool flag_closed_http_socket;
+    bool flag_closed_my_socket;
 
     bool flag_process_http_connecting;
     int http_socket_flags;
@@ -67,9 +68,15 @@ public:
 
     bool is_closed_http_socket() { return flag_closed_http_socket; }
 
+    void set_close_my_socket() { flag_closed_my_socket = true; }
+
+    bool is_closed_my_socket() { return flag_closed_my_socket; }
+
     void set_http_socket(int http_socket) { this->http_socket = http_socket; }
 
     bool is_received_get_request() { return flag_received_get_request; }
+
+    bool can_recv_from_client();
 
     bool can_recv_from_server();
 
